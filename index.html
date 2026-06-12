@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Compact AV Editor</title>
+<title>Advanced Multi-Media Editor</title>
 <style>
   :root {
     --bg-dark: #1e1e1e;
@@ -12,12 +12,16 @@
     --accent: #007acc;
     --accent-hover: #005f9e;
     --segment-blue: #007acc;
-    --segment-blue-hover: #0098ff;
+    --segment-green: #4caf50;
+    --segment-purple: #9c27b0;
+    --segment-orange: #ff9800;
+    --segment-red: #f44336;
     --selection-yellow: rgba(255, 215, 0, 0.3);
     --selection-border: #ffd700;
     --playhead-white: #ffffff;
     --text-color: #cccccc;
     --green-handle: #4caf50;
+    --drag-indicator: rgba(255, 255, 255, 0.7);
   }
 
   * { box-sizing: border-box; user-select: none; }
@@ -89,7 +93,7 @@
     min-height: 200px;
     background: var(--bg-panel);
   }
-  #audio-panel {
+  #media-panel {
     width: 300px;
     background: #2d2d30;
     border-right: 1px solid #444;
@@ -97,6 +101,37 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
+    overflow-y: auto;
+  }
+  .media-section h3 {
+    margin: 5px 0;
+    font-size: 14px;
+    color: #ddd;
+    border-bottom: 1px solid #444;
+    padding-bottom: 3px;
+  }
+  .media-item {
+    padding: 8px;
+    background: #3a3a3a;
+    border-radius: 4px;
+    margin-bottom: 5px;
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border: 1px solid transparent;
+  }
+  .media-item:hover {
+    background: #444;
+  }
+  .media-item.active {
+    border-color: var(--accent);
+    background: #333;
+  }
+  .media-item .duration {
+    color: #888;
+    font-size: 11px;
   }
   #video-container {
     flex: 1;
@@ -272,8 +307,11 @@
     font-size: 11px;
     color: white;
     overflow: hidden;
+    transition: transform 0.1s;
   }
-  .segment:hover { background: var(--segment-blue-hover); }
+  .segment.video { background: var(--segment-blue); }
+  .segment.audio { background: var(--segment-green); }
+  .segment:hover { opacity: 0.9; }
   .segment.selected {
     border: 2px solid white;
     box-shadow: 0 0 5px rgba(255,255,255,0.5);
@@ -289,6 +327,17 @@
   .segment-handle:hover { background: rgba(255,255,255,0.6); }
   .segment-handle.left { left: 0; }
   .segment-handle.right { right: 0; }
+
+  /* Drag Indicator */
+  .drag-indicator {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    width: 2px;
+    background: var(--drag-indicator);
+    z-index: 15;
+    pointer-events: none;
+  }
 
   /* Export Modal */
   #export-modal {
@@ -331,12 +380,12 @@
 
 <div id="toolbar">
   <label class="file-label">
-    Load Video
-    <input type="file" id="load-video" class="file-input" accept="video/*">
+    Add Video
+    <input type="file" id="load-video" class="file-input" accept="video/*" multiple>
   </label>
   <label class="file-label">
-    Load Audio
-    <input type="file" id="load-audio" class="file-input" accept="audio/*">
+    Add Audio
+    <input type="file" id="load-audio" class="file-input" accept="audio/*" multiple>
   </label>
   
   <div style="width: 1px; height: 20px; background: #555; margin: 0 5px;"></div>
@@ -373,9 +422,15 @@
 
 <div id="main-container">
   <div id="media-area">
-    <div id="audio-panel">
-      <div><strong>Audio Status</strong></div>
-      <div id="audio-info" class="info-text">No audio loaded</div>
+    <div id="media-panel">
+      <div class="media-section">
+        <h3>Video Files</h3>
+        <div id="video-list"></div>
+      </div>
+      <div class="media-section">
+        <h3>Audio Files</h3>
+        <div id="audio-list"></div>
+      </div>
       <div style="margin-top: auto;">
         <div>Selection: <span id="sel-display">0.00s - 0.00s</span></div>
       </div>
@@ -439,12 +494,20 @@
 
 <script>
 /**
- * COMPACT AV EDITOR
- * Standalone, single-file implementation.
+ * ADVANCED MULTI-MEDIA EDITOR
+ * Supports multiple videos/audio files with drag-and-drop timeline editing
  */
 
 // --- STATE MANAGEMENT ---
 const state = {
+  mediaFiles: {
+    video: [],
+    audio: []
+  },
+  currentMedia: {
+    video: null,
+    audio: null
+  },
   videoDuration: 0,
   audioDuration: 0,
   maxDuration: 0,
@@ -461,7 +524,8 @@ const state = {
   },
   selectedSegmentId: null,
   history: [],
-  historyIndex: -1
+  historyIndex: -1,
+  dragIndicator: null
 };
 
 // --- DOM ELEMENTS ---
@@ -479,7 +543,8 @@ const els = {
   playheadAudio: document.getElementById('playhead-audio'),
   timeDisplay: document.getElementById('time-display'),
   selDisplay: document.getElementById('sel-display'),
-  audioInfo: document.getElementById('audio-info'),
+  videoList: document.getElementById('video-list'),
+  audioList: document.getElementById('audio-list'),
   exportModal: document.getElementById('export-modal'),
   progressFill: document.getElementById('progress-fill'),
   exportStatus: document.getElementById('export-status'),
@@ -559,34 +624,134 @@ const updateUndoRedoButtons = () => {
 
 // --- MEDIA LOADING ---
 document.getElementById('load-video').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const url = URL.createObjectURL(file);
-  els.video.src = url;
-  els.video.onloadedmetadata = () => {
-    state.videoDuration = els.video.duration;
-    state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    resetTimeline('video');
-  };
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
+  
+  files.forEach(file => {
+    const url = URL.createObjectURL(file);
+    const media = {
+      id: generateId(),
+      file: file,
+      url: url,
+      duration: 0,
+      element: null
+    };
+    
+    const video = document.createElement('video');
+    video.src = url;
+    video.onloadedmetadata = () => {
+      media.duration = video.duration;
+      state.mediaFiles.video.push(media);
+      renderMediaList();
+      
+      // Set as current if first video
+      if (state.mediaFiles.video.length === 1) {
+        setCurrentMedia('video', media);
+      }
+    };
+  });
 });
 
 document.getElementById('load-audio').addEventListener('change', (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  const url = URL.createObjectURL(file);
-  els.audio.src = url;
-  els.audio.onloadedmetadata = () => {
-    state.audioDuration = els.audio.duration;
-    state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    els.audioInfo.textContent = `${file.name} (${formatTime(state.audioDuration)})`;
-    resetTimeline('audio');
+  const files = Array.from(e.target.files);
+  if (files.length === 0) return;
+  
+  files.forEach(file => {
+    const url = URL.createObjectURL(file);
+    const media = {
+      id: generateId(),
+      file: file,
+      url: url,
+      duration: 0,
+      element: null
+    };
     
+    const audio = document.createElement('audio');
+    audio.src = url;
+    audio.onloadedmetadata = () => {
+      media.duration = audio.duration;
+      state.mediaFiles.audio.push(media);
+      renderMediaList();
+      
+      // Set as current if first audio
+      if (state.mediaFiles.audio.length === 1) {
+        setCurrentMedia('audio', media);
+      }
+    };
+  });
+});
+
+const setCurrentMedia = (type, media) => {
+  if (type === 'video') {
+    state.currentMedia.video = media;
+    els.video.src = media.url;
+    state.videoDuration = media.duration;
+    state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
+    resetTimeline('video');
+  } else {
+    state.currentMedia.audio = media;
+    els.audio.src = media.url;
+    state.audioDuration = media.duration;
+    state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
+    resetTimeline('audio');
     initAudioRouting();
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
     }
-  };
-});
+  }
+  renderMediaList();
+};
+
+const renderMediaList = () => {
+  els.videoList.innerHTML = '';
+  state.mediaFiles.video.forEach(media => {
+    const div = document.createElement('div');
+    div.className = `media-item ${state.currentMedia.video?.id === media.id ? 'active' : ''}`;
+    div.innerHTML = `
+      <span>${media.file.name}</span>
+      <span class="duration">${formatTime(media.duration)}</span>
+    `;
+    div.addEventListener('click', () => setCurrentMedia('video', media));
+    div.addEventListener('dblclick', () => addCurrentMediaToTimeline('video'));
+    els.videoList.appendChild(div);
+  });
+  
+  els.audioList.innerHTML = '';
+  state.mediaFiles.audio.forEach(media => {
+    const div = document.createElement('div');
+    div.className = `media-item ${state.currentMedia.audio?.id === media.id ? 'active' : ''}`;
+    div.innerHTML = `
+      <span>${media.file.name}</span>
+      <span class="duration">${formatTime(media.duration)}</span>
+    `;
+    div.addEventListener('click', () => setCurrentMedia('audio', media));
+    div.addEventListener('dblclick', () => addCurrentMediaToTimeline('audio'));
+    els.audioList.appendChild(div);
+  });
+};
+
+const addCurrentMediaToTimeline = (type) => {
+  const media = state.currentMedia[type];
+  if (!media) return;
+  
+  const maxEnd = Math.max(
+    ...state.segments[type].map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
+    0
+  );
+  
+  const newStart = maxEnd + 1;
+  
+  state.segments[type].push({
+    id: generateId(),
+    sourceStart: 0,
+    sourceEnd: media.duration,
+    timelineStart: newStart,
+    mediaId: media.id
+  });
+  
+  saveState();
+  renderAll();
+};
 
 const resetTimeline = (type) => {
   const duration = type === 'video' ? state.videoDuration : state.audioDuration;
@@ -595,7 +760,8 @@ const resetTimeline = (type) => {
     id: generateId(),
     sourceStart: 0,
     sourceEnd: duration,
-    timelineStart: 0
+    timelineStart: 0,
+    mediaId: state.currentMedia[type]?.id
   }];
   
   if (type === 'video') {
@@ -678,13 +844,14 @@ const renderSegments = (type) => {
 
   state.segments[type].forEach(seg => {
     const el = document.createElement('div');
-    el.className = 'segment' + (state.selectedSegmentId === seg.id ? ' selected' : '');
+    el.className = `segment ${type} ${state.selectedSegmentId === seg.id ? ' selected' : ''}`;
     const dur = seg.sourceEnd - seg.sourceStart;
     el.style.left = (seg.timelineStart * state.zoom) + 'px';
     el.style.width = (dur * state.zoom) + 'px';
     el.textContent = formatTime(dur);
     el.dataset.id = seg.id;
     el.dataset.type = type;
+    el.dataset.mediaId = seg.mediaId;
 
     const leftHandle = document.createElement('div');
     leftHandle.className = 'segment-handle left';
@@ -696,6 +863,23 @@ const renderSegments = (type) => {
 
     container.appendChild(el);
   });
+};
+
+// --- DRAG INDICATOR ---
+const showDragIndicator = (x) => {
+  if (!state.dragIndicator) {
+    state.dragIndicator = document.createElement('div');
+    state.dragIndicator.className = 'drag-indicator';
+    document.body.appendChild(state.dragIndicator);
+  }
+  state.dragIndicator.style.left = x + 'px';
+  state.dragIndicator.style.display = 'block';
+};
+
+const hideDragIndicator = () => {
+  if (state.dragIndicator) {
+    state.dragIndicator.style.display = 'none';
+  }
 };
 
 // --- INTERACTION LOGIC ---
@@ -868,12 +1052,115 @@ document.addEventListener('mouseup', () => {
   }
 });
 
+// --- DRAG AND DROP HANDLING ---
+document.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  const rect = document.getElementById('timeline-area').getBoundingClientRect();
+  if (e.clientY > rect.top && e.clientY < rect.bottom) {
+    showDragIndicator(e.clientX);
+  } else {
+    hideDragIndicator();
+  }
+});
+
+document.addEventListener('dragleave', (e) => {
+  hideDragIndicator();
+});
+
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  hideDragIndicator();
+  
+  const files = Array.from(e.dataTransfer.files);
+  const videoFiles = files.filter(f => f.type.startsWith('video/'));
+  const audioFiles = files.filter(f => f.type.startsWith('audio/'));
+  
+  // Process video files
+  videoFiles.forEach(file => {
+    const url = URL.createObjectURL(file);
+    const media = {
+      id: generateId(),
+      file: file,
+      url: url,
+      duration: 0,
+      element: null
+    };
+    
+    const video = document.createElement('video');
+    video.src = url;
+    video.onloadedmetadata = () => {
+      media.duration = video.duration;
+      state.mediaFiles.video.push(media);
+      renderMediaList();
+      
+      // Add to timeline immediately
+      const maxEnd = Math.max(
+        ...state.segments.video.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
+        0
+      );
+      const newStart = maxEnd + 1;
+      
+      state.segments.video.push({
+        id: generateId(),
+        sourceStart: 0,
+        sourceEnd: media.duration,
+        timelineStart: newStart,
+        mediaId: media.id
+      });
+      
+      saveState();
+      renderAll();
+    };
+  });
+  
+  // Process audio files
+  audioFiles.forEach(file => {
+    const url = URL.createObjectURL(file);
+    const media = {
+      id: generateId(),
+      file: file,
+      url: url,
+      duration: 0,
+      element: null
+    };
+    
+    const audio = document.createElement('audio');
+    audio.src = url;
+    audio.onloadedmetadata = () => {
+      media.duration = audio.duration;
+      state.mediaFiles.audio.push(media);
+      renderMediaList();
+      
+      // Add to timeline immediately
+      const maxEnd = Math.max(
+        ...state.segments.audio.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
+        0
+      );
+      const newStart = maxEnd + 1;
+      
+      state.segments.audio.push({
+        id: generateId(),
+        sourceStart: 0,
+        sourceEnd: media.duration,
+        timelineStart: newStart,
+        mediaId: media.id
+      });
+      
+      saveState();
+      renderAll();
+    };
+  });
+});
+
 // --- EDITING ACTIONS ---
 document.getElementById('btn-add').addEventListener('click', () => {
   const sel = state.activeTimeline === 'video' ? state.videoSelection : state.audioSelection;
   if (sel.start === sel.end) return;
   
   const type = state.activeTimeline;
+  const currentMedia = state.currentMedia[type];
+  if (!currentMedia) return;
+  
   const maxEnd = Math.max(
     ...state.segments[type].map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
     0
@@ -885,7 +1172,8 @@ document.getElementById('btn-add').addEventListener('click', () => {
     id: generateId(),
     sourceStart: sel.start,
     sourceEnd: sel.end,
-    timelineStart: newStart
+    timelineStart: newStart,
+    mediaId: currentMedia.id
   });
   
   saveState();
@@ -909,7 +1197,8 @@ document.getElementById('btn-remove').addEventListener('click', () => {
           id: generateId(),
           sourceStart: seg.sourceStart,
           sourceEnd: seg.sourceStart + overlap,
-          timelineStart: seg.timelineStart
+          timelineStart: seg.timelineStart,
+          mediaId: seg.mediaId
         });
       }
       if (segEnd > end) {
@@ -918,7 +1207,8 @@ document.getElementById('btn-remove').addEventListener('click', () => {
           id: generateId(),
           sourceStart: seg.sourceStart + offset,
           sourceEnd: seg.sourceEnd,
-          timelineStart: end
+          timelineStart: end,
+          mediaId: seg.mediaId
         });
       }
     } else {
@@ -945,13 +1235,15 @@ document.getElementById('btn-split').addEventListener('click', () => {
         id: generateId(),
         sourceStart: seg.sourceStart,
         sourceEnd: seg.sourceStart + offset,
-        timelineStart: seg.timelineStart
+        timelineStart: seg.timelineStart,
+        mediaId: seg.mediaId
       });
       newSegments.push({
         id: generateId(),
         sourceStart: seg.sourceStart + offset,
         sourceEnd: seg.sourceEnd,
-        timelineStart: splitTime
+        timelineStart: splitTime,
+        mediaId: seg.mediaId
       });
     } else {
       newSegments.push(seg);
@@ -1033,15 +1325,24 @@ const togglePlay = (play) => {
     
     // CRITICAL FIX: Sync media to exact timeline position BEFORE playing to prevent initial stutter
     if (state.mode !== 'audio' && vidSeg) {
-      els.video.currentTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
-      lastPlayingVidSegId = vidSeg.id;
+      // Find the correct media source
+      const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
+      if (media) {
+        els.video.src = media.url;
+        els.video.currentTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+        lastPlayingVidSegId = vidSeg.id;
+      }
     } else {
       lastPlayingVidSegId = null;
     }
     
     if (state.mode !== 'video' && audSeg) {
-      els.audio.currentTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
-      lastPlayingAudSegId = audSeg.id;
+      const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
+      if (media) {
+        els.audio.src = media.url;
+        els.audio.currentTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
+        lastPlayingAudSegId = audSeg.id;
+      }
     } else {
       lastPlayingAudSegId = null;
     }
@@ -1114,9 +1415,13 @@ const playbackLoop = (timestamp) => {
   if (state.mode !== 'audio') {
     if (vidSeg) {
       if (vidSeg.id !== lastPlayingVidSegId) {
-        const sourceTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
-        els.video.currentTime = sourceTime;
-        lastPlayingVidSegId = vidSeg.id;
+        const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
+        if (media) {
+          els.video.src = media.url;
+          const sourceTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+          els.video.currentTime = sourceTime;
+          lastPlayingVidSegId = vidSeg.id;
+        }
       }
       if (els.video.paused) els.video.play().catch(()=>{});
       els.video.style.opacity = 1;
@@ -1135,9 +1440,13 @@ const playbackLoop = (timestamp) => {
   if (state.mode !== 'video') {
     if (audSeg) {
       if (audSeg.id !== lastPlayingAudSegId) {
-        const sourceTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
-        els.audio.currentTime = sourceTime;
-        lastPlayingAudSegId = audSeg.id;
+        const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
+        if (media) {
+          els.audio.src = media.url;
+          const sourceTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
+          els.audio.currentTime = sourceTime;
+          lastPlayingAudSegId = audSeg.id;
+        }
       }
       if (els.audio.paused) els.audio.play().catch(()=>{});
     } else {
@@ -1245,8 +1554,8 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   
   const canvas = els.canvas;
   const ctx = canvas.getContext('2d');
-  canvas.width = els.video.videoWidth || 640;
-  canvas.height = els.video.videoHeight || 360;
+  canvas.width = 1280;
+  canvas.height = 720;
 
   els.audio.muted = false;
   els.audio.volume = 1.0;
@@ -1321,20 +1630,28 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   const firstVidSeg = state.segments.video.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
   const firstAudSeg = state.segments.audio.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
 
-  if (firstVidSeg && state.mode !== 'audio') {
-    els.video.currentTime = firstVidSeg.sourceStart;
+  if (firstVidSeg) {
+    const media = state.mediaFiles.video.find(m => m.id === firstVidSeg.mediaId);
+    if (media) {
+      els.video.src = media.url;
+      els.video.currentTime = firstVidSeg.sourceStart;
+    }
   }
   
-  if (firstAudSeg && state.mode !== 'video') {
-    els.audio.currentTime = firstAudSeg.sourceStart;
+  if (firstAudSeg) {
+    const media = state.mediaFiles.audio.find(m => m.id === firstAudSeg.mediaId);
+    if (media) {
+      els.audio.src = media.url;
+      els.audio.currentTime = firstAudSeg.sourceStart;
+    }
   }
   
   await new Promise(resolve => {
     let checks = 0;
     const interval = setInterval(() => {
       checks++;
-      const vidReady = (state.mode === 'audio') || !firstVidSeg || els.video.readyState >= 3;
-      const audReady = (state.mode === 'video') || !firstAudSeg || els.audio.readyState >= 3;
+      const vidReady = !firstVidSeg || els.video.readyState >= 3;
+      const audReady = !firstAudSeg || els.audio.readyState >= 3;
       if ((vidReady && audReady) || checks > 20) {
         clearInterval(interval);
         resolve();
@@ -1344,17 +1661,17 @@ document.getElementById('btn-export').addEventListener('click', async () => {
 
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  if (firstVidSeg && state.mode !== 'audio') {
+  if (firstVidSeg) {
     ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
   }
 
   recorder.start(100);
   
-  if (firstVidSeg && state.mode !== 'audio') {
+  if (firstVidSeg) {
     els.video.play().catch(()=>{});
   }
   
-  if (firstAudSeg && state.mode !== 'video') {
+  if (firstAudSeg) {
     els.audio.play().catch(()=>{});
   }
   
@@ -1400,30 +1717,38 @@ document.getElementById('btn-export').addEventListener('click', async () => {
         currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart)
       );
       
-      if (vidSeg && state.mode !== 'audio') {
+      if (vidSeg) {
         if (vidSeg.id !== currentVidSegId) {
-          const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
-          els.video.currentTime = sourceTime;
-          currentVidSegId = vidSeg.id;
+          const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
+          if (media) {
+            els.video.src = media.url;
+            const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
+            els.video.currentTime = sourceTime;
+            currentVidSegId = vidSeg.id;
+          }
         }
         if (els.video.paused) {
           els.video.play().catch(()=>{});
         }
-      } else if (state.mode !== 'audio') {
+      } else {
         if (!els.video.paused) els.video.pause();
         currentVidSegId = null;
       }
       
-      if (audSeg && state.mode !== 'video') {
+      if (audSeg) {
         if (audSeg.id !== currentAudSegId) {
-          const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
-          els.audio.currentTime = sourceTime;
-          currentAudSegId = audSeg.id;
+          const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
+          if (media) {
+            els.audio.src = media.url;
+            const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
+            els.audio.currentTime = sourceTime;
+            currentAudSegId = audSeg.id;
+          }
         }
         if (els.audio.paused) {
           els.audio.play().catch(()=>{});
         }
-      } else if (state.mode !== 'video') {
+      } else {
         if (!els.audio.paused) els.audio.pause();
         currentAudSegId = null;
       }
@@ -1431,7 +1756,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      if (vidSeg && state.mode !== 'audio') {
+      if (vidSeg) {
         ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
       }
     }
