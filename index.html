@@ -488,6 +488,28 @@ const els = {
   rulerAudio: document.getElementById('ruler-audio')
 };
 
+// --- GLOBAL AUDIO CONTEXT FOR CONSISTENT PLAYBACK ---
+let audioCtx = null;
+let audioSource = null;
+let dest = null;
+
+function initAudioRouting() {
+  if (audioCtx) return;
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  dest = audioCtx.createMediaStreamDestination();
+  
+  try {
+    audioSource = audioCtx.createMediaElementSource(els.audio);
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = 1.0;
+    audioSource.connect(gainNode);
+    gainNode.connect(dest);
+    gainNode.connect(audioCtx.destination);
+  } catch(e) {
+    console.warn('Audio routing failed', e);
+  }
+}
+
 // --- UTILS ---
 const formatTime = (s) => {
   const m = Math.floor(s / 60);
@@ -559,6 +581,12 @@ document.getElementById('load-audio').addEventListener('change', (e) => {
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
     els.audioInfo.textContent = `${file.name} (${formatTime(state.audioDuration)})`;
     resetTimeline('audio');
+    
+    // Initialize audio routing so preview sounds exactly like export
+    initAudioRouting();
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
   };
 });
 
@@ -993,6 +1021,10 @@ const togglePlay = (play) => {
   state.isPlaying = play;
   document.getElementById('btn-play').textContent = state.isPlaying ? '▶ Playing' : '▶ Play';
   if (state.isPlaying) {
+    // Ensure AudioContext is running for high-quality playback
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
     lastTime = performance.now();
     els.video.playbackRate = 1;
     els.audio.playbackRate = 1;
@@ -1147,6 +1179,12 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     return;
   }
 
+  // Ensure audio routing is initialized and active
+  initAudioRouting();
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+
   els.exportModal.style.display = 'flex';
   els.exportStatus.textContent = 'Initializing export...';
   
@@ -1156,26 +1194,10 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   canvas.width = els.video.videoWidth || 640;
   canvas.height = els.video.videoHeight || 360;
 
-  // Setup Audio Context for mixing
-  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  const dest = audioCtx.createMediaStreamDestination();
-  
-  let audioSource;
-  try {
-    els.audio.muted = false;
-    els.audio.volume = 1.0;
-    
-    audioSource = audioCtx.createMediaElementSource(els.audio);
-    const gainNode = audioCtx.createGain();
-    gainNode.gain.value = 1.0;
-    audioSource.connect(gainNode);
-    gainNode.connect(dest);
-    gainNode.connect(audioCtx.destination);
-  } catch(e) {
-    console.warn('Audio routing failed', e);
-  }
+  els.audio.muted = false;
+  els.audio.volume = 1.0;
 
-  // Setup MediaRecorder
+  // Setup MediaRecorder using the global dest stream
   const canvasStream = canvas.captureStream(30);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
@@ -1225,7 +1247,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     URL.revokeObjectURL(url);
     
     els.exportModal.style.display = 'none';
-    audioCtx.close();
+    // DO NOT close audioCtx, as it would disconnect the audio element from speakers
     togglePlay(false);
     state.playhead = 0;
     renderPlayhead();
