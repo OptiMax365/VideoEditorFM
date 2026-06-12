@@ -346,7 +346,7 @@
   <button id="btn-stop">⏹ Stop</button>
   
   <select id="playback-mode">
-    <option value="both">Both (A+V)</option>
+    <option value="both">Both </option>
     <option value="video">Video Only</option>
     <option value="audio">Audio Only</option>
   </select>
@@ -1196,6 +1196,10 @@ document.getElementById('btn-export').addEventListener('click', async () => {
 
   els.audio.muted = false;
   els.audio.volume = 1.0;
+  
+  // Ensure playback rate is normal
+  els.video.playbackRate = 1;
+  els.audio.playbackRate = 1;
 
   // Setup MediaRecorder using the global dest stream
   const canvasStream = canvas.captureStream(30);
@@ -1205,7 +1209,11 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   ]);
 
   let mimeType = '';
+  // Prioritize MP4 formats for modern browsers, fallback to WebM if not supported
   const mimeTypes = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=h264,aac',
+    'video/mp4',
     'video/webm;codecs=vp9,opus',
     'video/webm;codecs=vp8,opus',
     'video/webm;codecs=vp9,vorbis',
@@ -1240,6 +1248,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
+    // Dynamically set extension based on the actual MIME type used
     a.download = `edited_export.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
     document.body.appendChild(a);
     a.click();
@@ -1257,7 +1266,58 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     els.video.currentTime = 0;
   };
 
+  // Reset playhead to start
+  state.playhead = 0;
+  renderPlayhead();
+  
+  // Find the first segments that cover timeline time 0
+  const firstVidSeg = state.segments.video.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
+  const firstAudSeg = state.segments.audio.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
+  
+  let currentVidSegId = firstVidSeg ? firstVidSeg.id : null;
+  let currentAudSegId = firstAudSeg ? firstAudSeg.id : null;
+
+  // Position video and audio at their exact starting points
+  if (firstVidSeg && state.mode !== 'audio') {
+    els.video.currentTime = firstVidSeg.sourceStart;
+  }
+  
+  if (firstAudSeg && state.mode !== 'video') {
+    els.audio.currentTime = firstAudSeg.sourceStart;
+  }
+  
+  // Wait for media to be ready at the start position to ensure smooth playback from the very beginning
+  await new Promise(resolve => {
+    let checks = 0;
+    const interval = setInterval(() => {
+      checks++;
+      const vidReady = (state.mode === 'audio') || !firstVidSeg || els.video.readyState >= 3;
+      const audReady = (state.mode === 'video') || !firstAudSeg || els.audio.readyState >= 3;
+      if ((vidReady && audReady) || checks > 20) { // Max 1 second wait
+        clearInterval(interval);
+        resolve();
+      }
+    }, 50);
+  });
+
+  // Draw the very first frame to canvas before starting recorder to avoid black frames
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  if (firstVidSeg && state.mode !== 'audio') {
+    ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
+  }
+
+  // Start recording
   recorder.start(100);
+  
+  // Start playing both video and audio naturally (like pressing play)
+  if (firstVidSeg && state.mode !== 'audio') {
+    els.video.play().catch(()=>{});
+  }
+  
+  if (firstAudSeg && state.mode !== 'video') {
+    els.audio.play().catch(()=>{});
+  }
   
   const maxEnd = Math.max(
     ...(state.segments.video.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
@@ -1290,43 +1350,52 @@ document.getElementById('btn-export').addEventListener('click', async () => {
       lastDrawTime = currentFrame;
       const currentTime = currentFrame * frameDuration;
       
-      const vidSeg = state.segments.video.find(s => currentTime >= s.timelineStart && currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart));
-      const audSeg = state.segments.audio.find(s => currentTime >= s.timelineStart && currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart));
+      // Find active segments for the current timeline time
+      const vidSeg = state.segments.video.find(s => 
+        currentTime >= s.timelineStart && 
+        currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart)
+      );
+      const audSeg = state.segments.audio.find(s => 
+        currentTime >= s.timelineStart && 
+        currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart)
+      );
       
-      // Set video time WITHOUT seeking repeatedly - let it play naturally
+      // Handle video: ONLY seek if the active segment changes to prevent audio/video glitches
       if (vidSeg && state.mode !== 'audio') {
-        const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
-        // Only seek if significantly off to avoid stuttering
-        if (Math.abs(els.video.currentTime - sourceTime) > 0.3) {
+        if (vidSeg.id !== currentVidSegId) {
+          const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
           els.video.currentTime = sourceTime;
+          currentVidSegId = vidSeg.id;
         }
-        // Ensure video is playing
         if (els.video.paused) {
           els.video.play().catch(()=>{});
         }
+      } else if (state.mode !== 'audio') {
+        if (!els.video.paused) els.video.pause();
+        currentVidSegId = null;
       }
       
-      // Handle audio
+      // Handle audio: ONLY seek if the active segment changes to prevent audio popping/jumping
       if (audSeg && state.mode !== 'video') {
-        const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
-        if (Math.abs(els.audio.currentTime - sourceTime) > 0.3) {
+        if (audSeg.id !== currentAudSegId) {
+          const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
           els.audio.currentTime = sourceTime;
+          currentAudSegId = audSeg.id;
         }
         if (els.audio.paused) {
           els.audio.play().catch(()=>{});
         }
-      } else {
-        els.audio.pause();
+      } else if (state.mode !== 'video') {
+        if (!els.audio.paused) els.audio.pause();
+        currentAudSegId = null;
       }
       
-      // Draw frame immediately
+      // Draw frame to canvas
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
       if (vidSeg && state.mode !== 'audio') {
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
-      } else {
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
     }
     
@@ -1336,23 +1405,8 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     requestAnimationFrame(exportLoop);
   };
   
-  // Preload and start video playing
-  const firstVidSeg = state.segments.video.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
-  if (firstVidSeg && state.mode !== 'audio') {
-    els.video.currentTime = firstVidSeg.sourceStart;
-    els.video.play().catch(()=>{});
-  }
-  
-  const firstAudSeg = state.segments.audio.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
-  if (firstAudSeg && state.mode !== 'video') {
-    els.audio.currentTime = firstAudSeg.sourceStart;
-    els.audio.play().catch(()=>{});
-  }
-  
-  // Small delay to ensure media is ready
-  setTimeout(() => {
-    requestAnimationFrame(exportLoop);
-  }, 100);
+  // Start the export loop
+  requestAnimationFrame(exportLoop);
 });
 
 // Initial render
