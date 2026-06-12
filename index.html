@@ -529,7 +529,6 @@ const saveState = () => {
     playhead: state.playhead,
     zoom: state.zoom
   });
-  // Remove future history if we were in the middle of undo
   if (state.historyIndex < state.history.length - 1) {
     state.history = state.history.slice(0, state.historyIndex + 1);
   }
@@ -582,7 +581,6 @@ document.getElementById('load-audio').addEventListener('change', (e) => {
     els.audioInfo.textContent = `${file.name} (${formatTime(state.audioDuration)})`;
     resetTimeline('audio');
     
-    // Initialize audio routing so preview sounds exactly like export
     initAudioRouting();
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
@@ -630,7 +628,6 @@ const renderRulers = () => {
     const width = Math.max(el.parentElement.offsetWidth, duration * state.zoom + 100);
     el.style.width = width + 'px';
     
-    // Simple tick marks
     const step = state.zoom > 100 ? 1 : (state.zoom > 50 ? 5 : 10);
     for (let t = 0; t <= duration + 10; t += step) {
       const tick = document.createElement('div');
@@ -672,7 +669,6 @@ const renderSegments = (type) => {
   container.innerHTML = '';
   const duration = type === 'video' ? state.videoDuration : state.audioDuration;
   
-  // Set track content width to accommodate all segments
   let maxEnd = duration;
   state.segments[type].forEach(seg => {
     maxEnd = Math.max(maxEnd, seg.timelineStart + (seg.sourceEnd - seg.sourceStart));
@@ -690,12 +686,10 @@ const renderSegments = (type) => {
     el.dataset.id = seg.id;
     el.dataset.type = type;
 
-    // Left handle
     const leftHandle = document.createElement('div');
     leftHandle.className = 'segment-handle left';
     el.appendChild(leftHandle);
 
-    // Right handle
     const rightHandle = document.createElement('div');
     rightHandle.className = 'segment-handle right';
     el.appendChild(rightHandle);
@@ -714,7 +708,7 @@ const getTimelineTime = (e, type) => {
 };
 
 const snapToTerminal = (time, type, excludeId) => {
-  const threshold = 10 / state.zoom; // 10 pixels
+  const threshold = 10 / state.zoom;
   let best = time;
   let minDiff = threshold;
 
@@ -776,7 +770,6 @@ document.addEventListener('mousedown', (e) => {
     state.activeTimeline = track;
     const time = getTimelineTime(e, track);
     
-    // Upper half vs Lower half logic
     const rect = e.target.closest('.track-content').getBoundingClientRect();
     const isUpper = (e.clientY - rect.top) < (rect.height / 2);
     
@@ -798,6 +791,10 @@ document.addEventListener('mousedown', (e) => {
       renderSegments('video');
       renderSegments('audio');
       if (!state.isPlaying) togglePlay(true);
+      else {
+          lastPlayingVidSegId = null;
+          lastPlayingAudSegId = null;
+      }
     }
   }
 });
@@ -831,6 +828,10 @@ document.addEventListener('mousemove', (e) => {
     state.playhead = Math.max(0, dragState.startPlayhead + (dx / state.zoom));
     renderPlayhead();
     els.timeDisplay.textContent = formatTime(state.playhead);
+    if (state.isPlaying) {
+        lastPlayingVidSegId = null;
+        lastPlayingAudSegId = null;
+    }
   } else if (dragState.type === 'segment-move') {
     const dx = e.clientX - dragState.startX;
     let newStart = dragState.originalTimelineStart + (dx / state.zoom);
@@ -873,13 +874,12 @@ document.getElementById('btn-add').addEventListener('click', () => {
   if (sel.start === sel.end) return;
   
   const type = state.activeTimeline;
-  const dur = sel.end - sel.start;
   const maxEnd = Math.max(
     ...state.segments[type].map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
     0
   );
   
-  const newStart = maxEnd + 1; // Place at end with 1s gap
+  const newStart = maxEnd + 1;
   
   state.segments[type].push({
     id: generateId(),
@@ -902,10 +902,7 @@ document.getElementById('btn-remove').addEventListener('click', () => {
   state.segments[type].forEach(seg => {
     const segEnd = seg.timelineStart + (seg.sourceEnd - seg.sourceStart);
     
-    // Check overlap
     if (seg.timelineStart < end && segEnd > start) {
-      // Split logic
-      // Part 1: Before selection
       if (seg.timelineStart < start) {
         const overlap = start - seg.timelineStart;
         newSegments.push({
@@ -915,7 +912,6 @@ document.getElementById('btn-remove').addEventListener('click', () => {
           timelineStart: seg.timelineStart
         });
       }
-      // Part 2: After selection
       if (segEnd > end) {
         const offset = end - seg.timelineStart;
         newSegments.push({
@@ -945,14 +941,12 @@ document.getElementById('btn-split').addEventListener('click', () => {
     const segEnd = seg.timelineStart + (seg.sourceEnd - seg.sourceStart);
     if (splitTime > seg.timelineStart && splitTime < segEnd) {
       const offset = splitTime - seg.timelineStart;
-      // Left part
       newSegments.push({
         id: generateId(),
         sourceStart: seg.sourceStart,
         sourceEnd: seg.sourceStart + offset,
         timelineStart: seg.timelineStart
       });
-      // Right part
       newSegments.push({
         id: generateId(),
         sourceStart: seg.sourceStart + offset,
@@ -1000,7 +994,6 @@ document.getElementById('btn-zoom-out').addEventListener('click', () => {
 document.getElementById('btn-undo').addEventListener('click', () => restoreState(state.historyIndex - 1));
 document.getElementById('btn-redo').addEventListener('click', () => restoreState(state.historyIndex + 1));
 
-// Keyboard shortcuts
 document.addEventListener('keydown', (e) => {
   if (e.ctrlKey && e.key === 'z') {
     e.preventDefault();
@@ -1016,20 +1009,46 @@ document.addEventListener('keydown', (e) => {
 // --- PLAYBACK ENGINE ---
 let animationFrame;
 let lastTime = 0;
+let lastPlayingVidSegId = null;
+let lastPlayingAudSegId = null;
 
 const togglePlay = (play) => {
   state.isPlaying = play;
   document.getElementById('btn-play').textContent = state.isPlaying ? '▶ Playing' : '▶ Play';
   if (state.isPlaying) {
-    // Ensure AudioContext is running for high-quality playback
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
     }
     lastTime = performance.now();
     els.video.playbackRate = 1;
     els.audio.playbackRate = 1;
+    
+    const findSegment = (type) => state.segments[type].find(s => 
+      state.playhead >= s.timelineStart && 
+      state.playhead < s.timelineStart + (s.sourceEnd - s.sourceStart)
+    );
+    
+    const vidSeg = findSegment('video');
+    const audSeg = findSegment('audio');
+    
+    // CRITICAL FIX: Sync media to exact timeline position BEFORE playing to prevent initial stutter
+    if (state.mode !== 'audio' && vidSeg) {
+      els.video.currentTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+      lastPlayingVidSegId = vidSeg.id;
+    } else {
+      lastPlayingVidSegId = null;
+    }
+    
+    if (state.mode !== 'video' && audSeg) {
+      els.audio.currentTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
+      lastPlayingAudSegId = audSeg.id;
+    } else {
+      lastPlayingAudSegId = null;
+    }
+
     if (state.mode !== 'audio') els.video.play().catch(()=>{});
     if (state.mode !== 'video') els.audio.play().catch(()=>{});
+    
     requestAnimationFrame(playbackLoop);
   } else {
     els.video.pause();
@@ -1046,10 +1065,16 @@ document.getElementById('btn-stop').addEventListener('click', () => {
   renderPlayhead();
   els.video.currentTime = 0;
   els.audio.currentTime = 0;
+  lastPlayingVidSegId = null;
+  lastPlayingAudSegId = null;
 });
 
 document.getElementById('playback-mode').addEventListener('change', (e) => {
   state.mode = e.target.value;
+  if (state.isPlaying) {
+      lastPlayingVidSegId = null;
+      lastPlayingAudSegId = null;
+  }
 });
 
 const playbackLoop = (timestamp) => {
@@ -1057,9 +1082,26 @@ const playbackLoop = (timestamp) => {
   const dt = (timestamp - lastTime) / 1000;
   lastTime = timestamp;
   
-  state.playhead += dt;
-  
-  // Find active segment
+  // CRITICAL FIX: Drive the UI playhead FROM the media's actual hardware clock.
+  // This prevents drift and eliminates the need to constantly seek the playing video.
+  if (state.mode !== 'audio' && !els.video.paused) {
+      const playingSeg = state.segments.video.find(s => s.id === lastPlayingVidSegId);
+      if (playingSeg && els.video.currentTime >= playingSeg.sourceStart - 0.1 && els.video.currentTime < playingSeg.sourceEnd + 0.1) {
+          state.playhead = playingSeg.timelineStart + (els.video.currentTime - playingSeg.sourceStart);
+      } else {
+          state.playhead += dt;
+      }
+  } else if (state.mode !== 'video' && !els.audio.paused) {
+      const playingSeg = state.segments.audio.find(s => s.id === lastPlayingAudSegId);
+      if (playingSeg && els.audio.currentTime >= playingSeg.sourceStart - 0.1 && els.audio.currentTime < playingSeg.sourceEnd + 0.1) {
+          state.playhead = playingSeg.timelineStart + (els.audio.currentTime - playingSeg.sourceStart);
+      } else {
+          state.playhead += dt;
+      }
+  } else {
+      state.playhead += dt;
+  }
+
   const findSegment = (type) => state.segments[type].find(s => 
     state.playhead >= s.timelineStart && 
     state.playhead < s.timelineStart + (s.sourceEnd - s.sourceStart)
@@ -1068,33 +1110,48 @@ const playbackLoop = (timestamp) => {
   const vidSeg = findSegment('video');
   const audSeg = findSegment('audio');
 
-  if (state.mode !== 'audio' && vidSeg) {
-    const sourceTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
-    if (Math.abs(els.video.currentTime - sourceTime) > 0.1) {
-      els.video.currentTime = sourceTime;
+  // Handle Video: ONLY seek if the active segment changes
+  if (state.mode !== 'audio') {
+    if (vidSeg) {
+      if (vidSeg.id !== lastPlayingVidSegId) {
+        const sourceTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+        els.video.currentTime = sourceTime;
+        lastPlayingVidSegId = vidSeg.id;
+      }
+      if (els.video.paused) els.video.play().catch(()=>{});
+      els.video.style.opacity = 1;
+    } else {
+      if (!els.video.paused) els.video.pause();
+      els.video.style.opacity = 0;
+      if (lastPlayingVidSegId !== null) lastPlayingVidSegId = null;
     }
-    els.video.style.opacity = 1;
-  } else if (state.mode !== 'audio') {
-    // Gap: black screen
-    els.video.pause();
-    els.video.style.opacity = 0; // Simulate black
+  } else {
+      if (!els.video.paused) els.video.pause();
+      els.video.style.opacity = 0;
+      lastPlayingVidSegId = null;
   }
 
-  if (state.mode !== 'video' && audSeg) {
-    const sourceTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
-    if (Math.abs(els.audio.currentTime - sourceTime) > 0.1) {
-      els.audio.currentTime = sourceTime;
+  // Handle Audio: ONLY seek if the active segment changes
+  if (state.mode !== 'video') {
+    if (audSeg) {
+      if (audSeg.id !== lastPlayingAudSegId) {
+        const sourceTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
+        els.audio.currentTime = sourceTime;
+        lastPlayingAudSegId = audSeg.id;
+      }
+      if (els.audio.paused) els.audio.play().catch(()=>{});
+    } else {
+      if (!els.audio.paused) els.audio.pause();
+      if (lastPlayingAudSegId !== null) lastPlayingAudSegId = null;
     }
-    if (els.audio.paused) els.audio.play().catch(()=>{});
-  } else if (state.mode !== 'video') {
-    // Gap: silence
-    els.audio.pause();
+  } else {
+      if (!els.audio.paused) els.audio.pause();
+      lastPlayingAudSegId = null;
   }
 
   renderPlayhead();
   els.timeDisplay.textContent = formatTime(state.playhead);
 
-  // Auto-stop at end of all segments
   const maxEnd = Math.max(
     ...(state.segments.video.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
     ...(state.segments.audio.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
@@ -1128,7 +1185,6 @@ document.addEventListener('mousemove', (e) => {
     let x = e.clientX - container.left - cardOffset.x;
     let y = e.clientY - container.top - cardOffset.y;
     
-    // Boundaries
     x = Math.max(0, Math.min(x, container.width - els.videoCard.offsetWidth));
     y = Math.max(0, Math.min(y, container.height - els.videoCard.offsetHeight));
     
@@ -1161,7 +1217,7 @@ document.addEventListener('mousemove', (e) => {
     const newHeight = Math.max(150, Math.min(startMediaHeight + dy, window.innerHeight - 200));
     document.getElementById('media-area').style.flex = 'none';
     document.getElementById('media-area').style.height = newHeight + 'px';
-    renderAll(); // Re-render to adjust widths
+    renderAll();
   }
 });
 
@@ -1179,7 +1235,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     return;
   }
 
-  // Ensure audio routing is initialized and active
   initAudioRouting();
   if (audioCtx.state === 'suspended') {
     audioCtx.resume();
@@ -1188,7 +1243,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   els.exportModal.style.display = 'flex';
   els.exportStatus.textContent = 'Initializing export...';
   
-  // Setup Canvas
   const canvas = els.canvas;
   const ctx = canvas.getContext('2d');
   canvas.width = els.video.videoWidth || 640;
@@ -1197,11 +1251,9 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   els.audio.muted = false;
   els.audio.volume = 1.0;
   
-  // Ensure playback rate is normal
   els.video.playbackRate = 1;
   els.audio.playbackRate = 1;
 
-  // Setup MediaRecorder using the global dest stream
   const canvasStream = canvas.captureStream(30);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
@@ -1209,7 +1261,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   ]);
 
   let mimeType = '';
-  // Prioritize MP4 formats for modern browsers, fallback to WebM if not supported
   const mimeTypes = [
     'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
     'video/mp4;codecs=h264,aac',
@@ -1248,7 +1299,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    // Dynamically set extension based on the actual MIME type used
     a.download = `edited_export.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
     document.body.appendChild(a);
     a.click();
@@ -1256,7 +1306,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     URL.revokeObjectURL(url);
     
     els.exportModal.style.display = 'none';
-    // DO NOT close audioCtx, as it would disconnect the audio element from speakers
     togglePlay(false);
     state.playhead = 0;
     renderPlayhead();
@@ -1266,18 +1315,12 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     els.video.currentTime = 0;
   };
 
-  // Reset playhead to start
   state.playhead = 0;
   renderPlayhead();
   
-  // Find the first segments that cover timeline time 0
   const firstVidSeg = state.segments.video.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
   const firstAudSeg = state.segments.audio.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
-  
-  let currentVidSegId = firstVidSeg ? firstVidSeg.id : null;
-  let currentAudSegId = firstAudSeg ? firstAudSeg.id : null;
 
-  // Position video and audio at their exact starting points
   if (firstVidSeg && state.mode !== 'audio') {
     els.video.currentTime = firstVidSeg.sourceStart;
   }
@@ -1286,31 +1329,27 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     els.audio.currentTime = firstAudSeg.sourceStart;
   }
   
-  // Wait for media to be ready at the start position to ensure smooth playback from the very beginning
   await new Promise(resolve => {
     let checks = 0;
     const interval = setInterval(() => {
       checks++;
       const vidReady = (state.mode === 'audio') || !firstVidSeg || els.video.readyState >= 3;
       const audReady = (state.mode === 'video') || !firstAudSeg || els.audio.readyState >= 3;
-      if ((vidReady && audReady) || checks > 20) { // Max 1 second wait
+      if ((vidReady && audReady) || checks > 20) {
         clearInterval(interval);
         resolve();
       }
     }, 50);
   });
 
-  // Draw the very first frame to canvas before starting recorder to avoid black frames
   ctx.fillStyle = '#000';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   if (firstVidSeg && state.mode !== 'audio') {
     ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
   }
 
-  // Start recording
   recorder.start(100);
   
-  // Start playing both video and audio naturally (like pressing play)
   if (firstVidSeg && state.mode !== 'audio') {
     els.video.play().catch(()=>{});
   }
@@ -1328,6 +1367,8 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   let exportStartTime = null;
   let lastDrawTime = -1;
   const frameDuration = 1/30;
+  let currentVidSegId = firstVidSeg ? firstVidSeg.id : null;
+  let currentAudSegId = firstAudSeg ? firstAudSeg.id : null;
   
   const exportLoop = (timestamp) => {
     if (!exportStartTime) exportStartTime = timestamp;
@@ -1350,7 +1391,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
       lastDrawTime = currentFrame;
       const currentTime = currentFrame * frameDuration;
       
-      // Find active segments for the current timeline time
       const vidSeg = state.segments.video.find(s => 
         currentTime >= s.timelineStart && 
         currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart)
@@ -1360,7 +1400,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
         currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart)
       );
       
-      // Handle video: ONLY seek if the active segment changes to prevent audio/video glitches
       if (vidSeg && state.mode !== 'audio') {
         if (vidSeg.id !== currentVidSegId) {
           const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
@@ -1375,7 +1414,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
         currentVidSegId = null;
       }
       
-      // Handle audio: ONLY seek if the active segment changes to prevent audio popping/jumping
       if (audSeg && state.mode !== 'video') {
         if (audSeg.id !== currentAudSegId) {
           const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
@@ -1390,7 +1428,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
         currentAudSegId = null;
       }
       
-      // Draw frame to canvas
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
@@ -1405,7 +1442,6 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     requestAnimationFrame(exportLoop);
   };
   
-  // Start the export loop
   requestAnimationFrame(exportLoop);
 });
 
