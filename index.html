@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compact AV Editor</title>
+<style>
+  :root {
+    --bg-dark: #1e1e1e;
+    --bg-panel: #252526;
+    --bg-timeline: #1e1e1e;
+    --accent: #007acc;
+    --accent-hover: #005f9e;
+    --segment-blue: #007acc;
+    --segment-blue-hover: #0098ff;
+    --selection-yellow: rgba(255, 215, 0, 0.3);
+    --selection-border: #ffd700;
+    --playhead-white: #ffffff;
+    --text-color: #cccccc;
+    --green-handle: #4caf50;
+  }
+
+  * { box-sizing: border-box; user-select: none; }
+  body {
+    margin: 0; padding: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg-dark);
+    color: var(--text-color);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Toolbar */
+  #toolbar {
+    height: 50px;
+    background: #333333;
+    display: flex;
+    align-items: center;
+    padding: 0 15px;
+    gap: 10px;
+    border-bottom: 1px solid #444;
+    flex-shrink: 0;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+  }
+  button:hover { background: var(--accent-hover); }
+  button:disabled { background: #555; cursor: not-allowed; }
+  .file-input { display: none; }
+  .file-label {
+    background: #444;
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    border: 1px solid #555;
+  }
+  .file-label:hover { background: #555; }
+  select {
+    background: #444;
+    color: white;
+    border: 1px solid #555;
+    padding: 5px;
+    border-radius: 4px;
+  }
+
+  /* Main Layout */
+  #main-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* Media Area */
+  #media-area {
+    flex: 1;
+    display: flex;
+    position: relative;
+    min-height: 200px;
+    background: var(--bg-panel);
+  }
+  #audio-panel {
+    width: 300px;
+    background: #2d2d30;
+    border-right: 1px solid #444;
+    padding: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  #video-container {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #000;
+    overflow: hidden;
+  }
+  #floating-video-card {
+    position: absolute;
+    background: #000;
+    border: 2px solid #555;
+    border-radius: 4px;
+    overflow: hidden;
+    resize: both;
+    min-width: 200px;
+    min-height: 150px;
+    max-width: 100%;
+    max-height: 100%;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+  }
+  #floating-video-card video {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+  }
+  .drag-handle {
+    height: 20px;
+    background: #444;
+    cursor: move;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    color: #aaa;
+  }
+
+  /* Resizer */
+  #resizer {
+    height: 6px;
+    background: var(--green-handle);
+    cursor: row-resize;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #resizer::after {
+    content: "⋮⋮";
+    color: white;
+    font-size: 10px;
+    letter-spacing: 2px;
+  }
+
+  /* Timeline Area */
+  #timeline-area {
+    height: 300px;
+    background: var(--bg-timeline);
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid #444;
+    position: relative;
+  }
+  .timeline-track {
+    flex: 1;
+    position: relative;
+    border-bottom: 1px solid #333;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .timeline-track:last-child { border-bottom: none; }
+  .track-label {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 60px;
+    background: #2d2d30;
+    border-right: 1px solid #444;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
+    z-index: 10;
+  }
+  .track-content {
+    margin-left: 60px;
+    position: relative;
+    height: 100%;
+    cursor: crosshair;
+  }
+  
+  /* Ruler */
+  .ruler {
+    height: 20px;
+    background: #252526;
+    border-bottom: 1px solid #444;
+    position: relative;
+    margin-left: 60px;
+  }
+
+  /* Selection */
+  .selection-bar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: var(--selection-yellow);
+    border-left: 2px solid var(--selection-border);
+    border-right: 2px solid var(--selection-border);
+    pointer-events: none;
+    z-index: 5;
+  }
+  .selection-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 8px;
+    background: var(--selection-border);
+    cursor: ew-resize;
+    z-index: 6;
+    pointer-events: auto;
+  }
+  .selection-handle.left { left: -4px; }
+  .selection-handle.right { right: -4px; }
+
+  /* Playhead */
+  .playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--playhead-white);
+    z-index: 20;
+    pointer-events: none;
+  }
+  .playhead::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -5px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid var(--playhead-white);
+  }
+  .playhead-hitbox {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 12px;
+    left: -5px;
+    cursor: ew-resize;
+    z-index: 21;
+    pointer-events: auto;
+  }
+
+  /* Segments */
+  .segment {
+    position: absolute;
+    top: 25px;
+    height: calc(100% - 30px);
+    background: var(--segment-blue);
+    border: 1px solid #005f9e;
+    border-radius: 3px;
+    cursor: grab;
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    color: white;
+    overflow: hidden;
+  }
+  .segment:hover { background: var(--segment-blue-hover); }
+  .segment.selected {
+    border: 2px solid white;
+    box-shadow: 0 0 5px rgba(255,255,255,0.5);
+  }
+  .segment-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    cursor: ew-resize;
+    background: rgba(255,255,255,0.3);
+  }
+  .segment-handle:hover { background: rgba(255,255,255,0.6); }
+  .segment-handle.left { left: 0; }
+  .segment-handle.right { right: 0; }
+
+  /* Export Modal */
+  #export-modal {
+    display: none;
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.8);
+    z-index: 1000;
+    align-items: center;
+    justify-content: center;
+  }
+  .modal-content {
+    background: var(--bg-panel);
+    padding: 30px;
+    border-radius: 8px;
+    width: 400px;
+    text-align: center;
+    border: 1px solid #555;
+  }
+  .progress-bar {
+    width: 100%;
+    height: 20px;
+    background: #444;
+    border-radius: 10px;
+    margin: 20px 0;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: var(--green-handle);
+    width: 0%;
+    transition: width 0.2s;
+  }
+
+  .info-text { font-size: 12px; color: #888; margin-top: 5px; }
+  .time-display { font-family: monospace; font-size: 14px; color: #fff; }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <label class="file-label">
+    Load Video
+    <input type="file" id="load-video" class="file-input" accept="video/*">
+  </label>
+  <label class="file-label">
+    Load Audio
+    <input type="file" id="load-audio" class="file-input" accept="audio/*">
+  </label>
+  
+  <div style="width: 1px; height: 20px; background: #555; margin: 0 5px;"></div>
+  
+  <button id="btn-play">▶ Play</button>
+  <button id="btn-pause">⏸ Pause</button>
+  <button id="btn-stop">⏹ Stop</button>
+  
+  <select id="playback-mode">
+    <option value="both">Both (A+V)</option>
+    <option value="video">Video Only</option>
+    <option value="audio">Audio Only</option>
+  </select>
+
+  <div style="width: 1px; height: 20px; background: #555; margin: 0 5px;"></div>
+
+  <button id="btn-add">Add Track</button>
+  <button id="btn-remove">Remove Selection</button>
+  <button id="btn-split">Split</button>
+  <button id="btn-delete">Delete Segment</button>
+  <button id="btn-reset">Reset</button>
+
+  <div style="width: 1px; height: 20px; background: #555; margin: 0 5px;"></div>
+
+  <button id="btn-zoom-in">Zoom +</button>
+  <button id="btn-zoom-out">Zoom -</button>
+  <button id="btn-undo" disabled>↶ Undo</button>
+  <button id="btn-redo" disabled>↷ Redo</button>
+
+  <div style="flex:1;"></div>
+  <span class="time-display" id="time-display">00:00.00</span>
+  <button id="btn-export" style="background: var(--green-handle);">⬇ Export MP4</button>
+</div>
+
+<div id="main-container">
+  <div id="media-area">
+    <div id="audio-panel">
+      <div><strong>Audio Status</strong></div>
+      <div id="audio-info" class="info-text">No audio loaded</div>
+      <div style="margin-top: auto;">
+        <div>Selection: <span id="sel-display">0.00s - 0.00s</span></div>
+      </div>
+    </div>
+    <div id="video-container">
+      <div id="floating-video-card" style="width: 480px; height: 270px; top: 20px; right: 20px;">
+        <div class="drag-handle">:: VIDEO ::</div>
+        <video id="main-video" muted playsinline></video>
+      </div>
+    </div>
+  </div>
+
+  <div id="resizer"></div>
+
+  <div id="timeline-area">
+    <div class="ruler" id="ruler-video"></div>
+    <div class="timeline-track" id="track-video">
+      <div class="track-label">VIDEO</div>
+      <div class="track-content" id="content-video">
+        <div class="selection-bar" id="sel-bar-video">
+          <div class="selection-handle left" data-track="video" data-side="left"></div>
+          <div class="selection-handle right" data-track="video" data-side="right"></div>
+        </div>
+        <div class="playhead" id="playhead-video">
+          <div class="playhead-hitbox" id="playhead-hit-video"></div>
+        </div>
+        <div id="segments-video"></div>
+      </div>
+    </div>
+
+    <div class="ruler" id="ruler-audio"></div>
+    <div class="timeline-track" id="track-audio">
+      <div class="track-label">AUDIO</div>
+      <div class="track-content" id="content-audio">
+        <div class="selection-bar" id="sel-bar-audio">
+          <div class="selection-handle left" data-track="audio" data-side="left"></div>
+          <div class="selection-handle right" data-track="audio" data-side="right"></div>
+        </div>
+        <div class="playhead" id="playhead-audio">
+          <div class="playhead-hitbox" id="playhead-hit-audio"></div>
+        </div>
+        <div id="segments-audio"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="export-modal">
+  <div class="modal-content">
+    <h3>Exporting Video</h3>
+    <p id="export-status">Rendering in real-time...</p>
+    <div class="progress-bar">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+    <p class="info-text">Do not close this window. Export speed matches playback duration.</p>
+  </div>
+</div>
+
+<audio id="main-audio" style="display:none;"></audio>
+<canvas id="export-canvas" style="display:none;"></canvas>
+
+<script>
+/**
+ * COMPACT AV EDITOR
+ * Standalone, single-file implementation.
+ */
+
+// --- STATE MANAGEMENT ---
+const state = {
+  videoDuration: 0,
+  audioDuration: 0,
+  maxDuration: 0,
+  zoom: 50, // pixels per second
+  playhead: 0,
+  isPlaying: false,
+  mode: 'both', // 'both', 'video', 'audio'
+  videoSelection: { start: 0, end: 0 },
+  audioSelection: { start: 0, end: 0 },
+  activeTimeline: 'video', // Tracks which timeline is currently being edited
+  segments: {
+    video: [],
+    audio: []
+  },
+  selectedSegmentId: null,
+  history: [],
+  historyIndex: -1
+};
+
+// --- DOM ELEMENTS ---
+const els = {
+  video: document.getElementById('main-video'),
+  audio: document.getElementById('main-audio'),
+  videoCard: document.getElementById('floating-video-card'),
+  contentVideo: document.getElementById('content-video'),
+  contentAudio: document.getElementById('content-audio'),
+  segmentsVideo: document.getElementById('segments-video'),
+  segmentsAudio: document.getElementById('segments-audio'),
+  selBarVideo: document.getElementById('sel-bar-video'),
+  selBarAudio: document.getElementById('sel-bar-audio'),
+  playheadVideo: document.getElementById('playhead-video'),
+  playheadAudio: document.getElementById('playhead-audio'),
+  timeDisplay: document.getElementById('time-display'),
+  selDisplay: document.getElementById('sel-display'),
+  audioInfo: document.getElementById('audio-info'),
+  exportModal: document.getElementById('export-modal'),
+  progressFill: document.getElementById('progress-fill'),
+  exportStatus: document.getElementById('export-status'),
+  canvas: document.getElementById('export-canvas'),
+  rulerVideo: document.getElementById('ruler-video'),
+  rulerAudio: document.getElementById('ruler-audio')
+};
+
+// --- UTILS ---
+const formatTime = (s) => {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  const ms = Math.floor((s % 1) * 100);
+  return `${m.toString().padStart(2,'0')}:${sec.toString().padStart(2,'0')}.${ms.toString().padStart(2,'0')}`;
+};
+
+const generateId = () => '_' + Math.random().toString(36).substr(2, 9);
+
+const saveState = () => {
+  const snapshot = JSON.stringify({
+    segments: state.segments,
+    videoSelection: state.videoSelection,
+    audioSelection: state.audioSelection,
+    activeTimeline: state.activeTimeline,
+    playhead: state.playhead,
+    zoom: state.zoom
+  });
+  // Remove future history if we were in the middle of undo
+  if (state.historyIndex < state.history.length - 1) {
+    state.history = state.history.slice(0, state.historyIndex + 1);
+  }
+  state.history.push(snapshot);
+  if (state.history.length > 50) state.history.shift();
+  else state.historyIndex++;
+  updateUndoRedoButtons();
+};
+
+const restoreState = (index) => {
+  if (index < 0 || index >= state.history.length) return;
+  state.historyIndex = index;
+  const snapshot = JSON.parse(state.history[index]);
+  state.segments = snapshot.segments;
+  state.videoSelection = snapshot.videoSelection || { start: 0, end: 0 };
+  state.audioSelection = snapshot.audioSelection || { start: 0, end: 0 };
+  state.activeTimeline = snapshot.activeTimeline || 'video';
+  state.playhead = snapshot.playhead;
+  state.zoom = snapshot.zoom;
+  updateUndoRedoButtons();
+  renderAll();
+};
+
+const updateUndoRedoButtons = () => {
+  document.getElementById('btn-undo').disabled = state.historyIndex <= 0;
+  document.getElementById('btn-redo').disabled = state.historyIndex >= state.history.length - 1;
+};
+
+// --- MEDIA LOADING ---
+document.getElementById('load-video').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  els.video.src = url;
+  els.video.onloadedmetadata = () => {
+    state.videoDuration = els.video.duration;
+    state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
+    resetTimeline('video');
+  };
+});
+
+document.getElementById('load-audio').addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const url = URL.createObjectURL(file);
+  els.audio.src = url;
+  els.audio.onloadedmetadata = () => {
+    state.audioDuration = els.audio.duration;
+    state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
+    els.audioInfo.textContent = `${file.name} (${formatTime(state.audioDuration)})`;
+    resetTimeline('audio');
+  };
+});
+
+const resetTimeline = (type) => {
+  const duration = type === 'video' ? state.videoDuration : state.audioDuration;
+  if (duration === 0) return;
+  state.segments[type] = [{
+    id: generateId(),
+    sourceStart: 0,
+    sourceEnd: duration,
+    timelineStart: 0
+  }];
+  
+  if (type === 'video') {
+    state.videoSelection = { start: 0, end: Math.min(5, duration) };
+  } else {
+    state.audioSelection = { start: 0, end: Math.min(5, duration) };
+  }
+  
+  state.playhead = 0;
+  saveState();
+  renderAll();
+};
+
+// --- RENDERING ---
+const renderAll = () => {
+  renderRulers();
+  renderSelection();
+  renderPlayhead();
+  renderSegments('video');
+  renderSegments('audio');
+  els.timeDisplay.textContent = formatTime(state.playhead);
+  
+  const activeSel = state.activeTimeline === 'video' ? state.videoSelection : state.audioSelection;
+  els.selDisplay.textContent = `${formatTime(activeSel.start)} - ${formatTime(activeSel.end)}`;
+};
+
+const renderRulers = () => {
+  const drawRuler = (el, duration) => {
+    el.innerHTML = '';
+    const width = Math.max(el.parentElement.offsetWidth, duration * state.zoom + 100);
+    el.style.width = width + 'px';
+    
+    // Simple tick marks
+    const step = state.zoom > 100 ? 1 : (state.zoom > 50 ? 5 : 10);
+    for (let t = 0; t <= duration + 10; t += step) {
+      const tick = document.createElement('div');
+      tick.style.position = 'absolute';
+      tick.style.left = (t * state.zoom) + 'px';
+      tick.style.top = '0';
+      tick.style.bottom = '0';
+      tick.style.width = '1px';
+      tick.style.background = t % (step*5) === 0 ? '#888' : '#444';
+      if (t % (step*5) === 0) {
+        tick.textContent = formatTime(t).split('.')[0];
+        tick.style.fontSize = '10px';
+        tick.style.color = '#888';
+        tick.style.paddingTop = '2px';
+      }
+      el.appendChild(tick);
+    }
+  };
+  drawRuler(els.rulerVideo, state.videoDuration);
+  drawRuler(els.rulerAudio, state.audioDuration);
+};
+
+const renderSelection = () => {
+  els.selBarVideo.style.left = (state.videoSelection.start * state.zoom) + 'px';
+  els.selBarVideo.style.width = ((state.videoSelection.end - state.videoSelection.start) * state.zoom) + 'px';
+  
+  els.selBarAudio.style.left = (state.audioSelection.start * state.zoom) + 'px';
+  els.selBarAudio.style.width = ((state.audioSelection.end - state.audioSelection.start) * state.zoom) + 'px';
+};
+
+const renderPlayhead = () => {
+  const pos = (state.playhead * state.zoom) + 'px';
+  els.playheadVideo.style.left = pos;
+  els.playheadAudio.style.left = pos;
+};
+
+const renderSegments = (type) => {
+  const container = type === 'video' ? els.segmentsVideo : els.segmentsAudio;
+  container.innerHTML = '';
+  const duration = type === 'video' ? state.videoDuration : state.audioDuration;
+  
+  // Set track content width to accommodate all segments
+  let maxEnd = duration;
+  state.segments[type].forEach(seg => {
+    maxEnd = Math.max(maxEnd, seg.timelineStart + (seg.sourceEnd - seg.sourceStart));
+  });
+  const trackContent = container.parentElement;
+  trackContent.style.width = Math.max(trackContent.offsetWidth, maxEnd * state.zoom + 100) + 'px';
+
+  state.segments[type].forEach(seg => {
+    const el = document.createElement('div');
+    el.className = 'segment' + (state.selectedSegmentId === seg.id ? ' selected' : '');
+    const dur = seg.sourceEnd - seg.sourceStart;
+    el.style.left = (seg.timelineStart * state.zoom) + 'px';
+    el.style.width = (dur * state.zoom) + 'px';
+    el.textContent = formatTime(dur);
+    el.dataset.id = seg.id;
+    el.dataset.type = type;
+
+    // Left handle
+    const leftHandle = document.createElement('div');
+    leftHandle.className = 'segment-handle left';
+    el.appendChild(leftHandle);
+
+    // Right handle
+    const rightHandle = document.createElement('div');
+    rightHandle.className = 'segment-handle right';
+    el.appendChild(rightHandle);
+
+    container.appendChild(el);
+  });
+};
+
+// --- INTERACTION LOGIC ---
+let dragState = null;
+
+const getTimelineTime = (e, type) => {
+  const rect = (type === 'video' ? els.contentVideo : els.contentAudio).getBoundingClientRect();
+  const x = e.clientX - rect.left + (type === 'video' ? els.contentVideo.scrollLeft : els.contentAudio.scrollLeft);
+  return Math.max(0, x / state.zoom);
+};
+
+const snapToTerminal = (time, type, excludeId) => {
+  const threshold = 10 / state.zoom; // 10 pixels
+  let best = time;
+  let minDiff = threshold;
+
+  state.segments[type].forEach(seg => {
+    if (seg.id === excludeId) return;
+    const start = seg.timelineStart;
+    const end = seg.timelineStart + (seg.sourceEnd - seg.sourceStart);
+    
+    if (Math.abs(time - start) < minDiff) { best = start; minDiff = Math.abs(time - start); }
+    if (Math.abs(time - end) < minDiff) { best = end; minDiff = Math.abs(time - end); }
+  });
+  return best;
+};
+
+// Mouse Down Delegation
+document.addEventListener('mousedown', (e) => {
+  if (e.target.classList.contains('selection-handle')) {
+    const track = e.target.dataset.track;
+    state.activeTimeline = track;
+    const sel = track === 'video' ? state.videoSelection : state.audioSelection;
+    dragState = {
+      type: 'selection',
+      track: track,
+      side: e.target.dataset.side,
+      startTime: sel[e.target.dataset.side === 'left' ? 'start' : 'end']
+    };
+  } else if (e.target.classList.contains('playhead-hitbox') || e.target.id.startsWith('playhead-')) {
+    dragState = { type: 'playhead', startPlayhead: state.playhead, startX: e.clientX };
+  } else if (e.target.classList.contains('segment')) {
+    state.selectedSegmentId = e.target.dataset.id;
+    state.activeTimeline = e.target.dataset.type;
+    const seg = state.segments[e.target.dataset.type].find(s => s.id === state.selectedSegmentId);
+    dragState = {
+      type: 'segment-move',
+      track: e.target.dataset.type,
+      segId: seg.id,
+      startX: e.clientX,
+      originalTimelineStart: seg.timelineStart
+    };
+    renderSegments(e.target.dataset.type);
+  } else if (e.target.classList.contains('segment-handle')) {
+    const segEl = e.target.parentElement;
+    state.selectedSegmentId = segEl.dataset.id;
+    state.activeTimeline = segEl.dataset.type;
+    const seg = state.segments[segEl.dataset.type].find(s => s.id === state.selectedSegmentId);
+    dragState = {
+      type: 'segment-resize',
+      track: segEl.dataset.type,
+      side: e.target.classList.contains('left') ? 'left' : 'right',
+      segId: seg.id,
+      startX: e.clientX,
+      originalSourceStart: seg.sourceStart,
+      originalSourceEnd: seg.sourceEnd,
+      originalTimelineStart: seg.timelineStart
+    };
+    renderSegments(segEl.dataset.type);
+  } else if (e.target.closest('.track-content')) {
+    const track = e.target.closest('.track-content').id.includes('video') ? 'video' : 'audio';
+    state.activeTimeline = track;
+    const time = getTimelineTime(e, track);
+    
+    // Upper half vs Lower half logic
+    const rect = e.target.closest('.track-content').getBoundingClientRect();
+    const isUpper = (e.clientY - rect.top) < (rect.height / 2);
+    
+    if (isUpper) {
+      dragState = {
+        type: 'selection-drag',
+        track: track,
+        startX: e.clientX,
+        startTime: time
+      };
+      const sel = track === 'video' ? state.videoSelection : state.audioSelection;
+      sel.start = time;
+      sel.end = time;
+      renderSelection();
+    } else {
+      state.playhead = time;
+      state.selectedSegmentId = null;
+      renderPlayhead();
+      renderSegments('video');
+      renderSegments('audio');
+      if (!state.isPlaying) togglePlay(true);
+    }
+  }
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!dragState) return;
+  e.preventDefault();
+
+  if (dragState.type === 'selection') {
+    const time = getTimelineTime(e, dragState.track);
+    const sel = dragState.track === 'video' ? state.videoSelection : state.audioSelection;
+    if (dragState.side === 'left') {
+      sel.start = Math.max(0, Math.min(time, sel.end));
+    } else {
+      sel.end = Math.max(time, sel.start);
+    }
+    renderSelection();
+  } else if (dragState.type === 'selection-drag') {
+    const time = getTimelineTime(e, dragState.track);
+    const sel = dragState.track === 'video' ? state.videoSelection : state.audioSelection;
+    if (time < dragState.startTime) {
+      sel.start = time;
+      sel.end = dragState.startTime;
+    } else {
+      sel.start = dragState.startTime;
+      sel.end = time;
+    }
+    renderSelection();
+  } else if (dragState.type === 'playhead') {
+    const dx = e.clientX - dragState.startX;
+    state.playhead = Math.max(0, dragState.startPlayhead + (dx / state.zoom));
+    renderPlayhead();
+    els.timeDisplay.textContent = formatTime(state.playhead);
+  } else if (dragState.type === 'segment-move') {
+    const dx = e.clientX - dragState.startX;
+    let newStart = dragState.originalTimelineStart + (dx / state.zoom);
+    newStart = Math.max(0, snapToTerminal(newStart, dragState.track, dragState.segId));
+    
+    const seg = state.segments[dragState.track].find(s => s.id === dragState.segId);
+    seg.timelineStart = newStart;
+    renderSegments(dragState.track);
+  } else if (dragState.type === 'segment-resize') {
+    const dx = e.clientX - dragState.startX;
+    const dt = dx / state.zoom;
+    const seg = state.segments[dragState.track].find(s => s.id === dragState.segId);
+    
+    if (dragState.side === 'left') {
+      let newSourceStart = Math.max(0, dragState.originalSourceStart + dt);
+      let newTimelineStart = dragState.originalTimelineStart + (newSourceStart - dragState.originalSourceStart);
+      newTimelineStart = Math.max(0, snapToTerminal(newTimelineStart, dragState.track, dragState.segId));
+      seg.timelineStart = newTimelineStart;
+      seg.sourceStart = dragState.originalSourceStart + (newTimelineStart - dragState.originalTimelineStart);
+      if (seg.sourceStart >= seg.sourceEnd) seg.sourceStart = seg.sourceEnd - 0.1;
+    } else {
+      let newSourceEnd = dragState.originalSourceEnd + dt;
+      newSourceEnd = Math.min(newSourceEnd, dragState.track === 'video' ? state.videoDuration : state.audioDuration);
+      seg.sourceEnd = Math.max(seg.sourceStart + 0.1, newSourceEnd);
+    }
+    renderSegments(dragState.track);
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  if (dragState) {
+    saveState();
+    dragState = null;
+  }
+});
+
+// --- EDITING ACTIONS ---
+document.getElementById('btn-add').addEventListener('click', () => {
+  const sel = state.activeTimeline === 'video' ? state.videoSelection : state.audioSelection;
+  if (sel.start === sel.end) return;
+  
+  const type = state.activeTimeline;
+  const dur = sel.end - sel.start;
+  const maxEnd = Math.max(
+    ...state.segments[type].map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
+    0
+  );
+  
+  const newStart = maxEnd + 1; // Place at end with 1s gap
+  
+  state.segments[type].push({
+    id: generateId(),
+    sourceStart: sel.start,
+    sourceEnd: sel.end,
+    timelineStart: newStart
+  });
+  
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-remove').addEventListener('click', () => {
+  const sel = state.activeTimeline === 'video' ? state.videoSelection : state.audioSelection;
+  const { start, end } = sel;
+  if (start === end) return;
+
+  const type = state.activeTimeline;
+  const newSegments = [];
+  state.segments[type].forEach(seg => {
+    const segEnd = seg.timelineStart + (seg.sourceEnd - seg.sourceStart);
+    
+    // Check overlap
+    if (seg.timelineStart < end && segEnd > start) {
+      // Split logic
+      // Part 1: Before selection
+      if (seg.timelineStart < start) {
+        const overlap = start - seg.timelineStart;
+        newSegments.push({
+          id: generateId(),
+          sourceStart: seg.sourceStart,
+          sourceEnd: seg.sourceStart + overlap,
+          timelineStart: seg.timelineStart
+        });
+      }
+      // Part 2: After selection
+      if (segEnd > end) {
+        const offset = end - seg.timelineStart;
+        newSegments.push({
+          id: generateId(),
+          sourceStart: seg.sourceStart + offset,
+          sourceEnd: seg.sourceEnd,
+          timelineStart: end
+        });
+      }
+    } else {
+      newSegments.push(seg);
+    }
+  });
+  state.segments[type] = newSegments;
+  
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-split').addEventListener('click', () => {
+  const sel = state.activeTimeline === 'video' ? state.videoSelection : state.audioSelection;
+  const splitTime = sel.end;
+  const type = state.activeTimeline;
+  
+  const newSegments = [];
+  state.segments[type].forEach(seg => {
+    const segEnd = seg.timelineStart + (seg.sourceEnd - seg.sourceStart);
+    if (splitTime > seg.timelineStart && splitTime < segEnd) {
+      const offset = splitTime - seg.timelineStart;
+      // Left part
+      newSegments.push({
+        id: generateId(),
+        sourceStart: seg.sourceStart,
+        sourceEnd: seg.sourceStart + offset,
+        timelineStart: seg.timelineStart
+      });
+      // Right part
+      newSegments.push({
+        id: generateId(),
+        sourceStart: seg.sourceStart + offset,
+        sourceEnd: seg.sourceEnd,
+        timelineStart: splitTime
+      });
+    } else {
+      newSegments.push(seg);
+    }
+  });
+  state.segments[type] = newSegments;
+  
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-delete').addEventListener('click', () => {
+  if (!state.selectedSegmentId) return;
+  const type = state.activeTimeline;
+  state.segments[type] = state.segments[type].filter(s => s.id !== state.selectedSegmentId);
+  state.selectedSegmentId = null;
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  if (state.videoDuration > 0) resetTimeline('video');
+  if (state.audioDuration > 0) resetTimeline('audio');
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-zoom-in').addEventListener('click', () => {
+  state.zoom = Math.min(200, state.zoom + 10);
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-zoom-out').addEventListener('click', () => {
+  state.zoom = Math.max(10, state.zoom - 10);
+  saveState();
+  renderAll();
+});
+
+document.getElementById('btn-undo').addEventListener('click', () => restoreState(state.historyIndex - 1));
+document.getElementById('btn-redo').addEventListener('click', () => restoreState(state.historyIndex + 1));
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey && e.key === 'z') {
+    e.preventDefault();
+    if (e.shiftKey) restoreState(state.historyIndex + 1);
+    else restoreState(state.historyIndex - 1);
+  }
+  if (e.key === ' ') {
+    e.preventDefault();
+    togglePlay(!state.isPlaying);
+  }
+});
+
+// --- PLAYBACK ENGINE ---
+let animationFrame;
+let lastTime = 0;
+
+const togglePlay = (play) => {
+  state.isPlaying = play;
+  document.getElementById('btn-play').textContent = state.isPlaying ? '▶ Playing' : '▶ Play';
+  if (state.isPlaying) {
+    lastTime = performance.now();
+    els.video.playbackRate = 1;
+    els.audio.playbackRate = 1;
+    if (state.mode !== 'audio') els.video.play().catch(()=>{});
+    if (state.mode !== 'video') els.audio.play().catch(()=>{});
+    requestAnimationFrame(playbackLoop);
+  } else {
+    els.video.pause();
+    els.audio.pause();
+    cancelAnimationFrame(animationFrame);
+  }
+};
+
+document.getElementById('btn-play').addEventListener('click', () => togglePlay(true));
+document.getElementById('btn-pause').addEventListener('click', () => togglePlay(false));
+document.getElementById('btn-stop').addEventListener('click', () => {
+  togglePlay(false);
+  state.playhead = 0;
+  renderPlayhead();
+  els.video.currentTime = 0;
+  els.audio.currentTime = 0;
+});
+
+document.getElementById('playback-mode').addEventListener('change', (e) => {
+  state.mode = e.target.value;
+});
+
+const playbackLoop = (timestamp) => {
+  if (!state.isPlaying) return;
+  const dt = (timestamp - lastTime) / 1000;
+  lastTime = timestamp;
+  
+  state.playhead += dt;
+  
+  // Find active segment
+  const findSegment = (type) => state.segments[type].find(s => 
+    state.playhead >= s.timelineStart && 
+    state.playhead < s.timelineStart + (s.sourceEnd - s.sourceStart)
+  );
+
+  const vidSeg = findSegment('video');
+  const audSeg = findSegment('audio');
+
+  if (state.mode !== 'audio' && vidSeg) {
+    const sourceTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+    if (Math.abs(els.video.currentTime - sourceTime) > 0.1) {
+      els.video.currentTime = sourceTime;
+    }
+    els.video.style.opacity = 1;
+  } else if (state.mode !== 'audio') {
+    // Gap: black screen
+    els.video.pause();
+    els.video.style.opacity = 0; // Simulate black
+  }
+
+  if (state.mode !== 'video' && audSeg) {
+    const sourceTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
+    if (Math.abs(els.audio.currentTime - sourceTime) > 0.1) {
+      els.audio.currentTime = sourceTime;
+    }
+    if (els.audio.paused) els.audio.play().catch(()=>{});
+  } else if (state.mode !== 'video') {
+    // Gap: silence
+    els.audio.pause();
+  }
+
+  renderPlayhead();
+  els.timeDisplay.textContent = formatTime(state.playhead);
+
+  // Auto-stop at end of all segments
+  const maxEnd = Math.max(
+    ...(state.segments.video.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
+    ...(state.segments.audio.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
+    0
+  );
+  
+  if (state.playhead >= maxEnd && maxEnd > 0) {
+    togglePlay(false);
+    state.playhead = maxEnd;
+    renderPlayhead();
+  } else {
+    animationFrame = requestAnimationFrame(playbackLoop);
+  }
+};
+
+// --- FLOATING VIDEO CARD DRAG/RESIZE ---
+let isDraggingCard = false;
+let cardOffset = { x: 0, y: 0 };
+
+els.videoCard.querySelector('.drag-handle').addEventListener('mousedown', (e) => {
+  isDraggingCard = true;
+  const rect = els.videoCard.getBoundingClientRect();
+  cardOffset.x = e.clientX - rect.left;
+  cardOffset.y = e.clientY - rect.top;
+  els.videoCard.style.cursor = 'grabbing';
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (isDraggingCard) {
+    const container = document.getElementById('video-container').getBoundingClientRect();
+    let x = e.clientX - container.left - cardOffset.x;
+    let y = e.clientY - container.top - cardOffset.y;
+    
+    // Boundaries
+    x = Math.max(0, Math.min(x, container.width - els.videoCard.offsetWidth));
+    y = Math.max(0, Math.min(y, container.height - els.videoCard.offsetHeight));
+    
+    els.videoCard.style.left = x + 'px';
+    els.videoCard.style.top = y + 'px';
+    els.videoCard.style.right = 'auto';
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  isDraggingCard = false;
+  els.videoCard.style.cursor = 'default';
+});
+
+// --- GREEN RESIZER HANDLE ---
+let isResizing = false;
+let startY = 0;
+let startMediaHeight = 0;
+
+document.getElementById('resizer').addEventListener('mousedown', (e) => {
+  isResizing = true;
+  startY = e.clientY;
+  startMediaHeight = document.getElementById('media-area').offsetHeight;
+  document.body.style.cursor = 'row-resize';
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (isResizing) {
+    const dy = e.clientY - startY;
+    const newHeight = Math.max(150, Math.min(startMediaHeight + dy, window.innerHeight - 200));
+    document.getElementById('media-area').style.flex = 'none';
+    document.getElementById('media-area').style.height = newHeight + 'px';
+    renderAll(); // Re-render to adjust widths
+  }
+});
+
+document.addEventListener('mouseup', () => {
+  if (isResizing) {
+    isResizing = false;
+    document.body.style.cursor = 'default';
+  }
+});
+
+// --- EXPORT SYSTEM (Real-time MediaRecorder) ---
+document.getElementById('btn-export').addEventListener('click', async () => {
+  if (state.segments.video.length === 0 && state.segments.audio.length === 0) {
+    alert('No media to export.');
+    return;
+  }
+
+  els.exportModal.style.display = 'flex';
+  els.exportStatus.textContent = 'Initializing export...';
+  
+  // Setup Canvas
+  const canvas = els.canvas;
+  const ctx = canvas.getContext('2d');
+  canvas.width = els.video.videoWidth || 640;
+  canvas.height = els.video.videoHeight || 360;
+
+  // Setup Audio Context for mixing
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const dest = audioCtx.createMediaStreamDestination();
+  
+  let audioSource;
+  try {
+    els.audio.muted = false;
+    els.audio.volume = 1.0;
+    
+    audioSource = audioCtx.createMediaElementSource(els.audio);
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = 1.0;
+    audioSource.connect(gainNode);
+    gainNode.connect(dest);
+    gainNode.connect(audioCtx.destination);
+  } catch(e) {
+    console.warn('Audio routing failed', e);
+  }
+
+  // Setup MediaRecorder
+  const canvasStream = canvas.captureStream(30);
+  const combinedStream = new MediaStream([
+    ...canvasStream.getVideoTracks(),
+    ...dest.stream.getAudioTracks()
+  ]);
+
+  let mimeType = '';
+  const mimeTypes = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9,vorbis',
+    'video/webm;codecs=vp8,vorbis',
+    'video/webm'
+  ];
+  
+  for (const type of mimeTypes) {
+    if (MediaRecorder.isTypeSupported(type)) {
+      mimeType = type;
+      break;
+    }
+  }
+  
+  if (!mimeType) mimeType = 'video/webm';
+  
+  const recorder = new MediaRecorder(combinedStream, { 
+    mimeType: mimeType,
+    videoBitsPerSecond: 5000000,
+    audioBitsPerSecond: 192000,
+    audioChannels: 2
+  });
+  
+  const chunks = [];
+  
+  recorder.ondataavailable = (e) => { 
+    if (e.data.size > 0) chunks.push(e.data); 
+  };
+  
+  recorder.onstop = () => {
+    const blob = new Blob(chunks, { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `edited_export.${mimeType.includes('mp4') ? 'mp4' : 'webm'}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    els.exportModal.style.display = 'none';
+    audioCtx.close();
+    togglePlay(false);
+    state.playhead = 0;
+    renderPlayhead();
+    els.audio.pause();
+    els.audio.currentTime = 0;
+    els.video.pause();
+    els.video.currentTime = 0;
+  };
+
+  recorder.start(100);
+  
+  const maxEnd = Math.max(
+    ...(state.segments.video.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
+    ...(state.segments.audio.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart))),
+    1
+  );
+  
+  let exportStartTime = null;
+  let lastDrawTime = -1;
+  const frameDuration = 1/30;
+  
+  const exportLoop = (timestamp) => {
+    if (!exportStartTime) exportStartTime = timestamp;
+    const elapsed = (timestamp - exportStartTime) / 1000;
+    
+    if (elapsed >= maxEnd) {
+      setTimeout(() => {
+        recorder.stop();
+      }, 100);
+      return;
+    }
+    
+    const progress = (elapsed / maxEnd) * 100;
+    els.progressFill.style.width = progress + '%';
+    els.exportStatus.textContent = `Rendering: ${formatTime(elapsed)} / ${formatTime(maxEnd)}`;
+    
+    const currentFrame = Math.floor(elapsed / frameDuration);
+    
+    if (currentFrame > lastDrawTime) {
+      lastDrawTime = currentFrame;
+      const currentTime = currentFrame * frameDuration;
+      
+      const vidSeg = state.segments.video.find(s => currentTime >= s.timelineStart && currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart));
+      const audSeg = state.segments.audio.find(s => currentTime >= s.timelineStart && currentTime < s.timelineStart + (s.sourceEnd - s.sourceStart));
+      
+      // Set video time WITHOUT seeking repeatedly - let it play naturally
+      if (vidSeg && state.mode !== 'audio') {
+        const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
+        // Only seek if significantly off to avoid stuttering
+        if (Math.abs(els.video.currentTime - sourceTime) > 0.3) {
+          els.video.currentTime = sourceTime;
+        }
+        // Ensure video is playing
+        if (els.video.paused) {
+          els.video.play().catch(()=>{});
+        }
+      }
+      
+      // Handle audio
+      if (audSeg && state.mode !== 'video') {
+        const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
+        if (Math.abs(els.audio.currentTime - sourceTime) > 0.3) {
+          els.audio.currentTime = sourceTime;
+        }
+        if (els.audio.paused) {
+          els.audio.play().catch(()=>{});
+        }
+      } else {
+        els.audio.pause();
+      }
+      
+      // Draw frame immediately
+      if (vidSeg && state.mode !== 'audio') {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
+      } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+      }
+    }
+    
+    state.playhead = elapsed;
+    renderPlayhead();
+    
+    requestAnimationFrame(exportLoop);
+  };
+  
+  // Preload and start video playing
+  const firstVidSeg = state.segments.video.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
+  if (firstVidSeg && state.mode !== 'audio') {
+    els.video.currentTime = firstVidSeg.sourceStart;
+    els.video.play().catch(()=>{});
+  }
+  
+  const firstAudSeg = state.segments.audio.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
+  if (firstAudSeg && state.mode !== 'video') {
+    els.audio.currentTime = firstAudSeg.sourceStart;
+    els.audio.play().catch(()=>{});
+  }
+  
+  // Small delay to ensure media is ready
+  setTimeout(() => {
+    requestAnimationFrame(exportLoop);
+  }, 100);
+});
+
+// Initial render
+renderAll();
+</script>
+</body>
+</html>
