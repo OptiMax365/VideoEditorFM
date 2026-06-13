@@ -623,11 +623,11 @@ const updateUndoRedoButtons = () => {
 };
 
 // --- MEDIA LOADING ---
-document.getElementById('load-video').addEventListener('change', (e) => {
+document.getElementById('load-video').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files);
   if (files.length === 0) return;
   
-  files.forEach(file => {
+  for (const file of files) {
     const url = URL.createObjectURL(file);
     const media = {
       id: generateId(),
@@ -639,24 +639,29 @@ document.getElementById('load-video').addEventListener('change', (e) => {
     
     const video = document.createElement('video');
     video.src = url;
-    video.onloadedmetadata = () => {
-      media.duration = video.duration;
-      state.mediaFiles.video.push(media);
-      renderMediaList();
-      
-      // Set as current if first video
-      if (state.mediaFiles.video.length === 1) {
-        setCurrentMedia('video', media);
-      }
-    };
-  });
+    
+    await new Promise(resolve => {
+      video.onloadedmetadata = () => {
+        media.duration = video.duration;
+        state.mediaFiles.video.push(media);
+        renderMediaList();
+        
+        // Set as current and add to timeline if first video
+        if (state.mediaFiles.video.length === 1) {
+          setCurrentMedia('video', media);
+          addMediaToTimeline(media, 'video');
+        }
+        resolve();
+      };
+    });
+  }
 });
 
-document.getElementById('load-audio').addEventListener('change', (e) => {
+document.getElementById('load-audio').addEventListener('change', async (e) => {
   const files = Array.from(e.target.files);
   if (files.length === 0) return;
   
-  files.forEach(file => {
+  for (const file of files) {
     const url = URL.createObjectURL(file);
     const media = {
       id: generateId(),
@@ -668,17 +673,22 @@ document.getElementById('load-audio').addEventListener('change', (e) => {
     
     const audio = document.createElement('audio');
     audio.src = url;
-    audio.onloadedmetadata = () => {
-      media.duration = audio.duration;
-      state.mediaFiles.audio.push(media);
-      renderMediaList();
-      
-      // Set as current if first audio
-      if (state.mediaFiles.audio.length === 1) {
-        setCurrentMedia('audio', media);
-      }
-    };
-  });
+    
+    await new Promise(resolve => {
+      audio.onloadedmetadata = () => {
+        media.duration = audio.duration;
+        state.mediaFiles.audio.push(media);
+        renderMediaList();
+        
+        // Set as current and add to timeline if first audio
+        if (state.mediaFiles.audio.length === 1) {
+          setCurrentMedia('audio', media);
+          addMediaToTimeline(media, 'audio');
+        }
+        resolve();
+      };
+    });
+  }
 });
 
 const setCurrentMedia = (type, media) => {
@@ -687,13 +697,13 @@ const setCurrentMedia = (type, media) => {
     els.video.src = media.url;
     state.videoDuration = media.duration;
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    resetTimeline('video');
+    // DO NOT reset timeline here!
   } else {
     state.currentMedia.audio = media;
     els.audio.src = media.url;
     state.audioDuration = media.duration;
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    resetTimeline('audio');
+    // DO NOT reset timeline here!
     initAudioRouting();
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
@@ -702,36 +712,8 @@ const setCurrentMedia = (type, media) => {
   renderMediaList();
 };
 
-const renderMediaList = () => {
-  els.videoList.innerHTML = '';
-  state.mediaFiles.video.forEach(media => {
-    const div = document.createElement('div');
-    div.className = `media-item ${state.currentMedia.video?.id === media.id ? 'active' : ''}`;
-    div.innerHTML = `
-      <span>${media.file.name}</span>
-      <span class="duration">${formatTime(media.duration)}</span>
-    `;
-    div.addEventListener('click', () => setCurrentMedia('video', media));
-    div.addEventListener('dblclick', () => addCurrentMediaToTimeline('video'));
-    els.videoList.appendChild(div);
-  });
-  
-  els.audioList.innerHTML = '';
-  state.mediaFiles.audio.forEach(media => {
-    const div = document.createElement('div');
-    div.className = `media-item ${state.currentMedia.audio?.id === media.id ? 'active' : ''}`;
-    div.innerHTML = `
-      <span>${media.file.name}</span>
-      <span class="duration">${formatTime(media.duration)}</span>
-    `;
-    div.addEventListener('click', () => setCurrentMedia('audio', media));
-    div.addEventListener('dblclick', () => addCurrentMediaToTimeline('audio'));
-    els.audioList.appendChild(div);
-  });
-};
-
-const addCurrentMediaToTimeline = (type) => {
-  const media = state.currentMedia[type];
+// --- ADD MEDIA TO TIMELINE ---
+const addMediaToTimeline = (media, type) => {
   if (!media) return;
   
   const maxEnd = Math.max(
@@ -739,7 +721,7 @@ const addCurrentMediaToTimeline = (type) => {
     0
   );
   
-  const newStart = maxEnd + 1;
+  const newStart = maxEnd; // Directly to the right of existing segments
   
   state.segments[type].push({
     id: generateId(),
@@ -751,6 +733,92 @@ const addCurrentMediaToTimeline = (type) => {
   
   saveState();
   renderAll();
+};
+
+const renderMediaList = () => {
+  els.videoList.innerHTML = '';
+  state.mediaFiles.video.forEach(media => {
+    const div = document.createElement('div');
+    div.className = `media-item ${state.currentMedia.video?.id === media.id ? 'active' : ''}`;
+    div.innerHTML = `
+      <span>${media.file.name}</span>
+      <span class="duration">${formatTime(media.duration)}</span>
+    `;
+    
+    let clickTimeout;
+    div.addEventListener('click', () => {
+      clearTimeout(clickTimeout);
+      clickTimeout = setTimeout(() => {
+        setCurrentMedia('video', media);
+      }, 250);
+    });
+    
+    div.addEventListener('dblclick', (e) => {
+      clearTimeout(clickTimeout);
+      e.preventDefault();
+      addMediaToTimeline(media, 'video');
+    });
+
+    // Drag and drop setup
+    div.draggable = true;
+    div.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('application/media-id', media.id);
+      e.dataTransfer.setData('application/media-type', 'video');
+      e.dataTransfer.effectAllowed = 'copy';
+      
+      // Custom drag image (button dragging indicator)
+      const dragImg = document.createElement('div');
+      dragImg.textContent = `🎬 ${media.file.name}`;
+      dragImg.style.cssText = 'position: absolute; top: -1000px; left: -1000px; background: #007acc; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 500; box-shadow: 0 2px 5px rgba(0,0,0,0.5); pointer-events: none; white-space: nowrap;';
+      document.body.appendChild(dragImg);
+      e.dataTransfer.setDragImage(dragImg, 10, 10);
+      setTimeout(() => document.body.removeChild(dragImg), 0);
+    });
+
+    els.videoList.appendChild(div);
+  });
+  
+  els.audioList.innerHTML = '';
+  state.mediaFiles.audio.forEach(media => {
+    const div = document.createElement('div');
+    div.className = `media-item ${state.currentMedia.audio?.id === media.id ? 'active' : ''}`;
+    div.innerHTML = `
+      <span>${media.file.name}</span>
+      <span class="duration">${formatTime(media.duration)}</span>
+    `;
+    
+    let clickTimeout;
+    div.addEventListener('click', () => {
+      clearTimeout(clickTimeout);
+      clickTimeout = setTimeout(() => {
+        setCurrentMedia('audio', media);
+      }, 250);
+    });
+    
+    div.addEventListener('dblclick', (e) => {
+      clearTimeout(clickTimeout);
+      e.preventDefault();
+      addMediaToTimeline(media, 'audio');
+    });
+
+    // Drag and drop setup
+    div.draggable = true;
+    div.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('application/media-id', media.id);
+      e.dataTransfer.setData('application/media-type', 'audio');
+      e.dataTransfer.effectAllowed = 'copy';
+      
+      // Custom drag image (button dragging indicator)
+      const dragImg = document.createElement('div');
+      dragImg.textContent = `🎵 ${media.file.name}`;
+      dragImg.style.cssText = 'position: absolute; top: -1000px; left: -1000px; background: #4caf50; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 500; box-shadow: 0 2px 5px rgba(0,0,0,0.5); pointer-events: none; white-space: nowrap;';
+      document.body.appendChild(dragImg);
+      e.dataTransfer.setDragImage(dragImg, 10, 10);
+      setTimeout(() => document.body.removeChild(dragImg), 0);
+    });
+
+    els.audioList.appendChild(div);
+  });
 };
 
 const resetTimeline = (type) => {
@@ -789,13 +857,18 @@ const renderAll = () => {
 };
 
 const renderRulers = () => {
-  const drawRuler = (el, duration) => {
+  const drawRuler = (el, type) => {
+    let maxEnd = type === 'video' ? state.videoDuration : state.audioDuration;
+    state.segments[type].forEach(seg => {
+      maxEnd = Math.max(maxEnd, seg.timelineStart + (seg.sourceEnd - seg.sourceStart));
+    });
+    
     el.innerHTML = '';
-    const width = Math.max(el.parentElement.offsetWidth, duration * state.zoom + 100);
+    const width = Math.max(el.parentElement.offsetWidth, maxEnd * state.zoom + 100);
     el.style.width = width + 'px';
     
     const step = state.zoom > 100 ? 1 : (state.zoom > 50 ? 5 : 10);
-    for (let t = 0; t <= duration + 10; t += step) {
+    for (let t = 0; t <= maxEnd + 10; t += step) {
       const tick = document.createElement('div');
       tick.style.position = 'absolute';
       tick.style.left = (t * state.zoom) + 'px';
@@ -812,8 +885,8 @@ const renderRulers = () => {
       el.appendChild(tick);
     }
   };
-  drawRuler(els.rulerVideo, state.videoDuration);
-  drawRuler(els.rulerAudio, state.audioDuration);
+  drawRuler(els.rulerVideo, 'video');
+  drawRuler(els.rulerAudio, 'audio');
 };
 
 const renderSelection = () => {
@@ -833,9 +906,8 @@ const renderPlayhead = () => {
 const renderSegments = (type) => {
   const container = type === 'video' ? els.segmentsVideo : els.segmentsAudio;
   container.innerHTML = '';
-  const duration = type === 'video' ? state.videoDuration : state.audioDuration;
   
-  let maxEnd = duration;
+  let maxEnd = type === 'video' ? state.videoDuration : state.audioDuration;
   state.segments[type].forEach(seg => {
     maxEnd = Math.max(maxEnd, seg.timelineStart + (seg.sourceEnd - seg.sourceStart));
   });
@@ -1038,7 +1110,9 @@ document.addEventListener('mousemove', (e) => {
       if (seg.sourceStart >= seg.sourceEnd) seg.sourceStart = seg.sourceEnd - 0.1;
     } else {
       let newSourceEnd = dragState.originalSourceEnd + dt;
-      newSourceEnd = Math.min(newSourceEnd, dragState.track === 'video' ? state.videoDuration : state.audioDuration);
+      const media = state.mediaFiles[dragState.track].find(m => m.id === seg.mediaId);
+      const maxDur = media ? media.duration : (dragState.track === 'video' ? state.videoDuration : state.audioDuration);
+      newSourceEnd = Math.min(newSourceEnd, maxDur);
       seg.sourceEnd = Math.max(seg.sourceStart + 0.1, newSourceEnd);
     }
     renderSegments(dragState.track);
@@ -1067,89 +1141,59 @@ document.addEventListener('dragleave', (e) => {
   hideDragIndicator();
 });
 
-document.addEventListener('drop', (e) => {
+document.addEventListener('drop', async (e) => {
   e.preventDefault();
   hideDragIndicator();
   
+  // Check if it's a UI media item drag
+  const mediaId = e.dataTransfer.getData('application/media-id');
+  const mediaType = e.dataTransfer.getData('application/media-type');
+  
+  if (mediaId && mediaType) {
+    const media = state.mediaFiles[mediaType].find(m => m.id === mediaId);
+    if (media) {
+      const timelineArea = document.getElementById('timeline-area');
+      const rect = timelineArea.getBoundingClientRect();
+      if (e.clientY >= rect.top && e.clientY <= rect.bottom) {
+        addMediaToTimeline(media, mediaType);
+      }
+    }
+    return;
+  }
+  
+  // Otherwise, handle OS files
   const files = Array.from(e.dataTransfer.files);
   const videoFiles = files.filter(f => f.type.startsWith('video/'));
   const audioFiles = files.filter(f => f.type.startsWith('audio/'));
   
-  // Process video files
-  videoFiles.forEach(file => {
-    const url = URL.createObjectURL(file);
-    const media = {
-      id: generateId(),
-      file: file,
-      url: url,
-      duration: 0,
-      element: null
-    };
-    
-    const video = document.createElement('video');
-    video.src = url;
-    video.onloadedmetadata = () => {
-      media.duration = video.duration;
-      state.mediaFiles.video.push(media);
-      renderMediaList();
-      
-      // Add to timeline immediately
-      const maxEnd = Math.max(
-        ...state.segments.video.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
-        0
-      );
-      const newStart = maxEnd + 1;
-      
-      state.segments.video.push({
+  const processFiles = async (files, type) => {
+    for (const file of files) {
+      const url = URL.createObjectURL(file);
+      const media = {
         id: generateId(),
-        sourceStart: 0,
-        sourceEnd: media.duration,
-        timelineStart: newStart,
-        mediaId: media.id
+        file: file,
+        url: url,
+        duration: 0,
+        element: null
+      };
+      
+      const el = document.createElement(type === 'video' ? 'video' : 'audio');
+      el.src = url;
+      
+      await new Promise(resolve => {
+        el.onloadedmetadata = () => {
+          media.duration = el.duration;
+          state.mediaFiles[type].push(media);
+          addMediaToTimeline(media, type);
+          renderMediaList();
+          resolve();
+        };
       });
-      
-      saveState();
-      renderAll();
-    };
-  });
-  
-  // Process audio files
-  audioFiles.forEach(file => {
-    const url = URL.createObjectURL(file);
-    const media = {
-      id: generateId(),
-      file: file,
-      url: url,
-      duration: 0,
-      element: null
-    };
-    
-    const audio = document.createElement('audio');
-    audio.src = url;
-    audio.onloadedmetadata = () => {
-      media.duration = audio.duration;
-      state.mediaFiles.audio.push(media);
-      renderMediaList();
-      
-      // Add to timeline immediately
-      const maxEnd = Math.max(
-        ...state.segments.audio.map(s => s.timelineStart + (s.sourceEnd - s.sourceStart)),
-        0
-      );
-      const newStart = maxEnd + 1;
-      
-      state.segments.audio.push({
-        id: generateId(),
-        sourceStart: 0,
-        sourceEnd: media.duration,
-        timelineStart: newStart,
-        mediaId: media.id
-      });
-      
-      saveState();
-      renderAll();
-    };
-  });
+    }
+  };
+
+  await processFiles(videoFiles, 'video');
+  await processFiles(audioFiles, 'audio');
 });
 
 // --- EDITING ACTIONS ---
@@ -1166,7 +1210,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
     0
   );
   
-  const newStart = maxEnd + 1;
+  const newStart = maxEnd; // Directly to the right of existing segments
   
   state.segments[type].push({
     id: generateId(),
@@ -1325,7 +1369,6 @@ const togglePlay = (play) => {
     
     // CRITICAL FIX: Sync media to exact timeline position BEFORE playing to prevent initial stutter
     if (state.mode !== 'audio' && vidSeg) {
-      // Find the correct media source
       const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
       if (media) {
         els.video.src = media.url;
@@ -1383,8 +1426,6 @@ const playbackLoop = (timestamp) => {
   const dt = (timestamp - lastTime) / 1000;
   lastTime = timestamp;
   
-  // CRITICAL FIX: Drive the UI playhead FROM the media's actual hardware clock.
-  // This prevents drift and eliminates the need to constantly seek the playing video.
   if (state.mode !== 'audio' && !els.video.paused) {
       const playingSeg = state.segments.video.find(s => s.id === lastPlayingVidSegId);
       if (playingSeg && els.video.currentTime >= playingSeg.sourceStart - 0.1 && els.video.currentTime < playingSeg.sourceEnd + 0.1) {
@@ -1411,7 +1452,6 @@ const playbackLoop = (timestamp) => {
   const vidSeg = findSegment('video');
   const audSeg = findSegment('audio');
 
-  // Handle Video: ONLY seek if the active segment changes
   if (state.mode !== 'audio') {
     if (vidSeg) {
       if (vidSeg.id !== lastPlayingVidSegId) {
@@ -1436,7 +1476,6 @@ const playbackLoop = (timestamp) => {
       lastPlayingVidSegId = null;
   }
 
-  // Handle Audio: ONLY seek if the active segment changes
   if (state.mode !== 'video') {
     if (audSeg) {
       if (audSeg.id !== lastPlayingAudSegId) {
