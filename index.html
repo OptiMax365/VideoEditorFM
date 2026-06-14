@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- UPDATE: Fixed audio export to include both original video audio and added audio tracks -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -493,6 +494,8 @@
 <canvas id="export-canvas" style="display:none;"></canvas>
 
 <script>
+// UPDATE: Fixed audio export to include both original video audio and added audio tracks
+
 /**
  * ADVANCED MULTI-MEDIA EDITOR
  * Supports multiple videos/audio files with drag-and-drop timeline editing
@@ -555,23 +558,46 @@ const els = {
 
 // --- GLOBAL AUDIO CONTEXT FOR CONSISTENT PLAYBACK ---
 let audioCtx = null;
-let audioSource = null;
+let videoAudioSource = null;
+let audioAudioSource = null;
 let dest = null;
+let videoSourceCreated = false;
+let audioSourceCreated = false;
 
 function initAudioRouting() {
-  if (audioCtx) return;
-  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  dest = audioCtx.createMediaStreamDestination();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    dest = audioCtx.createMediaStreamDestination();
+  }
   
-  try {
-    audioSource = audioCtx.createMediaElementSource(els.audio);
-    const gainNode = audioCtx.createGain();
-    gainNode.gain.value = 1.0;
-    audioSource.connect(gainNode);
-    gainNode.connect(dest);
-    gainNode.connect(audioCtx.destination);
-  } catch(e) {
-    console.warn('Audio routing failed', e);
+  // Route the original video's audio
+  if (!videoSourceCreated) {
+    try {
+      videoAudioSource = audioCtx.createMediaElementSource(els.video);
+      const videoGain = audioCtx.createGain();
+      videoGain.gain.value = 1.0;
+      videoAudioSource.connect(videoGain);
+      videoGain.connect(dest);
+      videoGain.connect(audioCtx.destination);
+      videoSourceCreated = true;
+    } catch(e) {
+      console.warn('Video audio routing failed', e);
+    }
+  }
+
+  // Route the added audio
+  if (!audioSourceCreated) {
+    try {
+      audioAudioSource = audioCtx.createMediaElementSource(els.audio);
+      const audioGain = audioCtx.createGain();
+      audioGain.gain.value = 1.0;
+      audioAudioSource.connect(audioGain);
+      audioGain.connect(dest);
+      audioGain.connect(audioCtx.destination);
+      audioSourceCreated = true;
+    } catch(e) {
+      console.warn('Audio routing failed', e);
+    }
   }
 }
 
@@ -697,13 +723,15 @@ const setCurrentMedia = (type, media) => {
     els.video.src = media.url;
     state.videoDuration = media.duration;
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    // DO NOT reset timeline here!
+    initAudioRouting(); // Initialize routing for video audio
+    if (audioCtx && audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
   } else {
     state.currentMedia.audio = media;
     els.audio.src = media.url;
     state.audioDuration = media.duration;
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    // DO NOT reset timeline here!
     initAudioRouting();
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
@@ -1596,6 +1624,9 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   canvas.width = 1280;
   canvas.height = 720;
 
+  // Ensure both media elements are unmuted so their audio is captured by the AudioContext
+  els.video.muted = false;
+  els.video.volume = 1.0;
   els.audio.muted = false;
   els.audio.volume = 1.0;
   
@@ -1605,7 +1636,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   const canvasStream = canvas.captureStream(30);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
-    ...dest.stream.getAudioTracks()
+    ...dest.stream.getAudioTracks() // This now contains the mixed audio of both video and added audio
   ]);
 
   let mimeType = '';
