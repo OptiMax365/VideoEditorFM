@@ -1735,8 +1735,7 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
   }
 
-  recorder.start(100);
-  
+  recorder.start();  
   if (firstVidSeg) {
     els.video.play().catch(()=>{});
   }
