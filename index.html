@@ -1,6 +1,5 @@
 <!DOCTYPE html>
-<!-- UPDATE: Fixed audio export to include both original video audio and added audio tracks -->
-<!-- UPDATE 2: Fixed black screen during transitions by ensuring seamless segment playback -->
+<!-- UPDATE: Fixed black screen issue during video/audio transitions using dual-buffer system -->
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -440,7 +439,8 @@
     <div id="video-container">
       <div id="floating-video-card" style="width: 480px; height: 270px; top: 20px; right: 20px;">
         <div class="drag-handle">:: VIDEO ::</div>
-        <video id="main-video" playsinline></video>
+        <video id="main-video" playsinline preload="auto"></video>
+        <video id="main-video-2" playsinline preload="auto" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none;opacity:0;"></video>
       </div>
     </div>
   </div>
@@ -491,12 +491,12 @@
   </div>
 </div>
 
-<audio id="main-audio" style="display:none;"></audio>
+<audio id="main-audio" style="display:none;" preload="auto"></audio>
+<audio id="main-audio-2" style="display:none;" preload="auto"></audio>
 <canvas id="export-canvas" style="display:none;"></canvas>
 
 <script>
-// UPDATE: Fixed audio export to include both original video audio and added audio tracks
-// UPDATE 2: Fixed black screen during transitions by ensuring seamless segment playback
+// UPDATE: Fixed black screen issue during video/audio transitions using dual-buffer system
 
 /**
  * ADVANCED MULTI-MEDIA EDITOR
@@ -536,7 +536,9 @@ const state = {
 // --- DOM ELEMENTS ---
 const els = {
   video: document.getElementById('main-video'),
+  video2: document.getElementById('main-video-2'),
   audio: document.getElementById('main-audio'),
+  audio2: document.getElementById('main-audio-2'),
   videoCard: document.getElementById('floating-video-card'),
   contentVideo: document.getElementById('content-video'),
   contentAudio: document.getElementById('content-audio'),
@@ -562,7 +564,9 @@ const els = {
 let audioCtx = null;
 let dest = null;
 let videoSourceCreated = false;
+let videoSource2Created = false;
 let audioSourceCreated = false;
+let audioSource2Created = false;
 
 function initAudioRouting() {
   if (!audioCtx) {
@@ -585,6 +589,21 @@ function initAudioRouting() {
     }
   }
 
+  // Route the second video's audio
+  if (!videoSource2Created) {
+    try {
+      const video2AudioSource = audioCtx.createMediaElementSource(els.video2);
+      const video2Gain = audioCtx.createGain();
+      video2Gain.gain.value = 1.0;
+      video2AudioSource.connect(video2Gain);
+      video2Gain.connect(dest);
+      video2Gain.connect(audioCtx.destination);
+      videoSource2Created = true;
+    } catch(e) {
+      console.warn('Video2 audio routing failed', e);
+    }
+  }
+
   // Route the added audio
   if (!audioSourceCreated) {
     try {
@@ -597,6 +616,21 @@ function initAudioRouting() {
       audioSourceCreated = true;
     } catch(e) {
       console.warn('Audio routing failed', e);
+    }
+  }
+
+  // Route the second audio
+  if (!audioSource2Created) {
+    try {
+      const audio2AudioSource = audioCtx.createMediaElementSource(els.audio2);
+      const audio2Gain = audioCtx.createGain();
+      audio2Gain.gain.value = 1.0;
+      audio2AudioSource.connect(audio2Gain);
+      audio2Gain.connect(dest);
+      audio2Gain.connect(audioCtx.destination);
+      audioSource2Created = true;
+    } catch(e) {
+      console.warn('Audio2 routing failed', e);
     }
   }
 }
@@ -721,15 +755,17 @@ const setCurrentMedia = (type, media) => {
   if (type === 'video') {
     state.currentMedia.video = media;
     els.video.src = media.url;
+    els.video2.src = media.url;
     state.videoDuration = media.duration;
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
-    initAudioRouting(); // Initialize routing for video audio
+    initAudioRouting();
     if (audioCtx && audioCtx.state === 'suspended') {
       audioCtx.resume();
     }
   } else {
     state.currentMedia.audio = media;
     els.audio.src = media.url;
+    els.audio2.src = media.url;
     state.audioDuration = media.duration;
     state.maxDuration = Math.max(state.videoDuration, state.audioDuration);
     initAudioRouting();
@@ -749,7 +785,7 @@ const addMediaToTimeline = (media, type) => {
     0
   );
   
-  const newStart = maxEnd; // Directly to the right of existing segments
+  const newStart = maxEnd;
   
   state.segments[type].push({
     id: generateId(),
@@ -787,14 +823,12 @@ const renderMediaList = () => {
       addMediaToTimeline(media, 'video');
     });
 
-    // Drag and drop setup
     div.draggable = true;
     div.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('application/media-id', media.id);
       e.dataTransfer.setData('application/media-type', 'video');
       e.dataTransfer.effectAllowed = 'copy';
       
-      // Custom drag image (button dragging indicator)
       const dragImg = document.createElement('div');
       dragImg.textContent = `🎬 ${media.file.name}`;
       dragImg.style.cssText = 'position: absolute; top: -1000px; left: -1000px; background: #007acc; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 500; box-shadow: 0 2px 5px rgba(0,0,0,0.5); pointer-events: none; white-space: nowrap;';
@@ -829,14 +863,12 @@ const renderMediaList = () => {
       addMediaToTimeline(media, 'audio');
     });
 
-    // Drag and drop setup
     div.draggable = true;
     div.addEventListener('dragstart', (e) => {
       e.dataTransfer.setData('application/media-id', media.id);
       e.dataTransfer.setData('application/media-type', 'audio');
       e.dataTransfer.effectAllowed = 'copy';
       
-      // Custom drag image (button dragging indicator)
       const dragImg = document.createElement('div');
       dragImg.textContent = `🎵 ${media.file.name}`;
       dragImg.style.cssText = 'position: absolute; top: -1000px; left: -1000px; background: #4caf50; color: white; padding: 6px 12px; border-radius: 4px; font-size: 12px; font-weight: 500; box-shadow: 0 2px 5px rgba(0,0,0,0.5); pointer-events: none; white-space: nowrap;';
@@ -1173,7 +1205,6 @@ document.addEventListener('drop', async (e) => {
   e.preventDefault();
   hideDragIndicator();
   
-  // Check if it's a UI media item drag
   const mediaId = e.dataTransfer.getData('application/media-id');
   const mediaType = e.dataTransfer.getData('application/media-type');
   
@@ -1189,7 +1220,6 @@ document.addEventListener('drop', async (e) => {
     return;
   }
   
-  // Otherwise, handle OS files
   const files = Array.from(e.dataTransfer.files);
   const videoFiles = files.filter(f => f.type.startsWith('video/'));
   const audioFiles = files.filter(f => f.type.startsWith('audio/'));
@@ -1238,7 +1268,7 @@ document.getElementById('btn-add').addEventListener('click', () => {
     0
   );
   
-  const newStart = maxEnd; // Directly to the right of existing segments
+  const newStart = maxEnd;
   
   state.segments[type].push({
     id: generateId(),
@@ -1370,11 +1400,72 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// --- PLAYBACK ENGINE ---
+// --- PLAYBACK ENGINE WITH DUAL-BUFFER SYSTEM ---
 let animationFrame;
 let lastTime = 0;
 let lastPlayingVidSegId = null;
 let lastPlayingAudSegId = null;
+let activeVideoElement = 'video'; // 'video' or 'video2'
+let activeAudioElement = 'audio'; // 'audio' or 'audio2'
+let preloadedVideoSegId = null;
+let preloadedAudioSegId = null;
+
+// Helper function to get the active video element
+const getActiveVideo = () => activeVideoElement === 'video' ? els.video : els.video2;
+const getInactiveVideo = () => activeVideoElement === 'video' ? els.video2 : els.video;
+const getActiveAudio = () => activeAudioElement === 'audio' ? els.audio : els.audio2;
+const getInactiveAudio = () => activeAudioElement === 'audio' ? els.audio2 : els.audio;
+
+// Preload next segment into inactive element
+const preloadSegment = (type, seg) => {
+  if (!seg) return;
+  const media = state.mediaFiles[type].find(m => m.id === seg.mediaId);
+  if (!media) return;
+  
+  if (type === 'video') {
+    const inactiveVideo = getInactiveVideo();
+    if (inactiveVideo.src !== media.url) {
+      inactiveVideo.src = media.url;
+    }
+    const sourceTime = seg.sourceStart;
+    inactiveVideo.currentTime = sourceTime;
+    preloadedVideoSegId = seg.id;
+  } else {
+    const inactiveAudio = getInactiveAudio();
+    if (inactiveAudio.src !== media.url) {
+      inactiveAudio.src = media.url;
+    }
+    const sourceTime = seg.sourceStart;
+    inactiveAudio.currentTime = sourceTime;
+    preloadedAudioSegId = seg.id;
+  }
+};
+
+// Switch to preloaded element
+const switchToPreloaded = (type) => {
+  if (type === 'video') {
+    const activeVideo = getActiveVideo();
+    const inactiveVideo = getInactiveVideo();
+    
+    // Pause current
+    activeVideo.pause();
+    activeVideo.style.opacity = '0';
+    
+    // Switch active element
+    activeVideoElement = activeVideoElement === 'video' ? 'video2' : 'video';
+    
+    // Play new active
+    inactiveVideo.style.opacity = '1';
+    inactiveVideo.play().catch(()=>{});
+  } else {
+    const activeAudio = getActiveAudio();
+    const inactiveAudio = getInactiveAudio();
+    
+    activeAudio.pause();
+    activeAudioElement = activeAudioElement === 'audio' ? 'audio2' : 'audio';
+    inactiveAudio.play().catch(()=>{});
+  }
+};
 
 const togglePlay = (play) => {
   state.isPlaying = play;
@@ -1385,7 +1476,9 @@ const togglePlay = (play) => {
     }
     lastTime = performance.now();
     els.video.playbackRate = 1;
+    els.video2.playbackRate = 1;
     els.audio.playbackRate = 1;
+    els.audio2.playbackRate = 1;
     
     const findSegment = (type) => state.segments[type].find(s => 
       state.playhead >= s.timelineStart && 
@@ -1395,16 +1488,27 @@ const togglePlay = (play) => {
     const vidSeg = findSegment('video');
     const audSeg = findSegment('audio');
     
-    // CRITICAL FIX: Sync media to exact timeline position BEFORE playing to prevent initial stutter
+    // Initialize both video elements
+    els.video.style.opacity = '0';
+    els.video2.style.opacity = '0';
+    
     if (state.mode !== 'audio' && vidSeg) {
       const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
       if (media) {
-        // Only change src if media changed or first play
-        if (els.video.src !== media.url) {
-          els.video.src = media.url;
-        }
+        activeVideoElement = 'video';
+        els.video.src = media.url;
         els.video.currentTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+        els.video.style.opacity = '1';
         lastPlayingVidSegId = vidSeg.id;
+        
+        // Preload next segment if exists
+        const nextVidSeg = state.segments.video.find(s => 
+          s.timelineStart >= vidSeg.timelineStart + (vidSeg.sourceEnd - vidSeg.sourceStart) &&
+          s.timelineStart < vidSeg.timelineStart + (vidSeg.sourceEnd - vidSeg.sourceStart) + 2
+        );
+        if (nextVidSeg) {
+          preloadSegment('video', nextVidSeg);
+        }
       }
     } else {
       lastPlayingVidSegId = null;
@@ -1413,23 +1517,33 @@ const togglePlay = (play) => {
     if (state.mode !== 'video' && audSeg) {
       const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
       if (media) {
-        if (els.audio.src !== media.url) {
-          els.audio.src = media.url;
-        }
+        activeAudioElement = 'audio';
+        els.audio.src = media.url;
         els.audio.currentTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
         lastPlayingAudSegId = audSeg.id;
+        
+        // Preload next segment if exists
+        const nextAudSeg = state.segments.audio.find(s => 
+          s.timelineStart >= audSeg.timelineStart + (audSeg.sourceEnd - audSeg.sourceStart) &&
+          s.timelineStart < audSeg.timelineStart + (audSeg.sourceEnd - audSeg.sourceStart) + 2
+        );
+        if (nextAudSeg) {
+          preloadSegment('audio', nextAudSeg);
+        }
       }
     } else {
       lastPlayingAudSegId = null;
     }
 
-    if (state.mode !== 'audio') els.video.play().catch(()=>{});
-    if (state.mode !== 'video') els.audio.play().catch(()=>{});
+    if (state.mode !== 'audio' && vidSeg) getActiveVideo().play().catch(()=>{});
+    if (state.mode !== 'video' && audSeg) getActiveAudio().play().catch(()=>{});
     
     requestAnimationFrame(playbackLoop);
   } else {
     els.video.pause();
+    els.video2.pause();
     els.audio.pause();
+    els.audio2.pause();
     cancelAnimationFrame(animationFrame);
   }
 };
@@ -1441,9 +1555,15 @@ document.getElementById('btn-stop').addEventListener('click', () => {
   state.playhead = 0;
   renderPlayhead();
   els.video.currentTime = 0;
+  els.video2.currentTime = 0;
   els.audio.currentTime = 0;
+  els.audio2.currentTime = 0;
   lastPlayingVidSegId = null;
   lastPlayingAudSegId = null;
+  activeVideoElement = 'video';
+  activeAudioElement = 'audio';
+  els.video.style.opacity = '1';
+  els.video2.style.opacity = '0';
 });
 
 document.getElementById('playback-mode').addEventListener('change', (e) => {
@@ -1459,95 +1579,121 @@ const playbackLoop = (timestamp) => {
   const dt = (timestamp - lastTime) / 1000;
   lastTime = timestamp;
   
-  // Determine current playhead based on actual media playback if possible
-  let updatedPlayhead = state.playhead + dt;
+  const activeVideo = getActiveVideo();
+  const activeAudio = getActiveAudio();
   
+  if (state.mode !== 'audio' && !activeVideo.paused) {
+      const playingSeg = state.segments.video.find(s => s.id === lastPlayingVidSegId);
+      if (playingSeg && activeVideo.currentTime >= playingSeg.sourceStart - 0.1 && activeVideo.currentTime < playingSeg.sourceEnd + 0.1) {
+          state.playhead = playingSeg.timelineStart + (activeVideo.currentTime - playingSeg.sourceStart);
+      } else {
+          state.playhead += dt;
+      }
+  } else if (state.mode !== 'video' && !activeAudio.paused) {
+      const playingSeg = state.segments.audio.find(s => s.id === lastPlayingAudSegId);
+      if (playingSeg && activeAudio.currentTime >= playingSeg.sourceStart - 0.1 && activeAudio.currentTime < playingSeg.sourceEnd + 0.1) {
+          state.playhead = playingSeg.timelineStart + (activeAudio.currentTime - playingSeg.sourceStart);
+      } else {
+          state.playhead += dt;
+      }
+  } else {
+      state.playhead += dt;
+  }
+
   const findSegment = (type) => state.segments[type].find(s => 
-    updatedPlayhead >= s.timelineStart && 
-    updatedPlayhead < s.timelineStart + (s.sourceEnd - s.sourceStart)
+    state.playhead >= s.timelineStart && 
+    state.playhead < s.timelineStart + (s.sourceEnd - s.sourceStart)
   );
 
   const vidSeg = findSegment('video');
   const audSeg = findSegment('audio');
 
-  // Handle video
   if (state.mode !== 'audio') {
     if (vidSeg) {
-      const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
-      if (media) {
-        // Check if we are continuing from previous segment of SAME file and contiguous
-        const isSameFile = lastPlayingVidSegId && 
-          state.segments.video.some(s => s.id === lastPlayingVidSegId && s.mediaId === vidSeg.mediaId);
-        
-        const lastSeg = lastPlayingVidSegId ? 
-          state.segments.video.find(s => s.id === lastPlayingVidSegId) : null;
-        
-        const isContiguous = lastSeg && 
-          (lastSeg.timelineStart + (lastSeg.sourceEnd - lastSeg.sourceStart) === vidSeg.timelineStart) &&
-          (lastSeg.sourceEnd === vidSeg.sourceStart);
-
-        if (vidSeg.id !== lastPlayingVidSegId) {
-          // Only switch source if not contiguous same-file playback
-          if (!isContiguous || !isSameFile) {
-            els.video.src = media.url;
-            const sourceTime = vidSeg.sourceStart + (updatedPlayhead - vidSeg.timelineStart);
-            els.video.currentTime = sourceTime;
+      if (vidSeg.id !== lastPlayingVidSegId) {
+        // Check if we already preloaded this segment
+        if (preloadedVideoSegId === vidSeg.id) {
+          // Switch to preloaded element
+          switchToPreloaded('video');
+        } else {
+          // Fallback: load directly (shouldn't happen often)
+          const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
+          if (media) {
+            const inactiveVideo = getInactiveVideo();
+            inactiveVideo.src = media.url;
+            const sourceTime = vidSeg.sourceStart + (state.playhead - vidSeg.timelineStart);
+            inactiveVideo.currentTime = sourceTime;
+            switchToPreloaded('video');
           }
-          lastPlayingVidSegId = vidSeg.id;
         }
+        lastPlayingVidSegId = vidSeg.id;
         
-        // If already playing and contiguous, let natural playback continue
-        if (els.video.paused) els.video.play().catch(()=>{});
-        els.video.style.opacity = 1;
+        // Preload next segment
+        const nextVidSeg = state.segments.video.find(s => 
+          s.timelineStart >= vidSeg.timelineStart + (vidSeg.sourceEnd - vidSeg.sourceStart) &&
+          s.timelineStart < vidSeg.timelineStart + (vidSeg.sourceEnd - vidSeg.sourceStart) + 2
+        );
+        if (nextVidSeg) {
+          preloadSegment('video', nextVidSeg);
+        }
       }
+      
+      const currentActiveVideo = getActiveVideo();
+      if (currentActiveVideo.paused) currentActiveVideo.play().catch(()=>{});
+      currentActiveVideo.style.opacity = '1';
     } else {
-      if (!els.video.paused) els.video.pause();
-      els.video.style.opacity = 0;
+      const currentActiveVideo = getActiveVideo();
+      if (!currentActiveVideo.paused) currentActiveVideo.pause();
+      currentActiveVideo.style.opacity = '0';
       if (lastPlayingVidSegId !== null) lastPlayingVidSegId = null;
     }
   } else {
-      if (!els.video.paused) els.video.pause();
-      els.video.style.opacity = 0;
+      const currentActiveVideo = getActiveVideo();
+      if (!currentActiveVideo.paused) currentActiveVideo.pause();
+      currentActiveVideo.style.opacity = '0';
       lastPlayingVidSegId = null;
   }
 
-  // Handle audio
   if (state.mode !== 'video') {
     if (audSeg) {
-      const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
-      if (media) {
-        const isSameFile = lastPlayingAudSegId && 
-          state.segments.audio.some(s => s.id === lastPlayingAudSegId && s.mediaId === audSeg.mediaId);
-        
-        const lastSeg = lastPlayingAudSegId ? 
-          state.segments.audio.find(s => s.id === lastPlayingAudSegId) : null;
-        
-        const isContiguous = lastSeg && 
-          (lastSeg.timelineStart + (lastSeg.sourceEnd - lastSeg.sourceStart) === audSeg.timelineStart) &&
-          (lastSeg.sourceEnd === audSeg.sourceStart);
-
-        if (audSeg.id !== lastPlayingAudSegId) {
-          if (!isContiguous || !isSameFile) {
-            els.audio.src = media.url;
-            const sourceTime = audSeg.sourceStart + (updatedPlayhead - audSeg.timelineStart);
-            els.audio.currentTime = sourceTime;
+      if (audSeg.id !== lastPlayingAudSegId) {
+        if (preloadedAudioSegId === audSeg.id) {
+          switchToPreloaded('audio');
+        } else {
+          const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
+          if (media) {
+            const inactiveAudio = getInactiveAudio();
+            inactiveAudio.src = media.url;
+            const sourceTime = audSeg.sourceStart + (state.playhead - audSeg.timelineStart);
+            inactiveAudio.currentTime = sourceTime;
+            switchToPreloaded('audio');
           }
-          lastPlayingAudSegId = audSeg.id;
         }
+        lastPlayingAudSegId = audSeg.id;
         
-        if (els.audio.paused) els.audio.play().catch(()=>{});
+        // Preload next segment
+        const nextAudSeg = state.segments.audio.find(s => 
+          s.timelineStart >= audSeg.timelineStart + (audSeg.sourceEnd - audSeg.sourceStart) &&
+          s.timelineStart < audSeg.timelineStart + (audSeg.sourceEnd - audSeg.sourceStart) + 2
+        );
+        if (nextAudSeg) {
+          preloadSegment('audio', nextAudSeg);
+        }
       }
+      
+      const currentActiveAudio = getActiveAudio();
+      if (currentActiveAudio.paused) currentActiveAudio.play().catch(()=>{});
     } else {
-      if (!els.audio.paused) els.audio.pause();
+      const currentActiveAudio = getActiveAudio();
+      if (!currentActiveAudio.paused) currentActiveAudio.pause();
       if (lastPlayingAudSegId !== null) lastPlayingAudSegId = null;
     }
   } else {
-      if (!els.audio.paused) els.audio.pause();
+      const currentActiveAudio = getActiveAudio();
+      if (!currentActiveAudio.paused) currentActiveAudio.pause();
       lastPlayingAudSegId = null;
   }
 
-  // Update playhead
-  state.playhead = updatedPlayhead;
   renderPlayhead();
   els.timeDisplay.textContent = formatTime(state.playhead);
 
@@ -1627,7 +1773,7 @@ document.addEventListener('mouseup', () => {
   }
 });
 
-// --- EXPORT SYSTEM (Real-time MediaRecorder) ---
+// --- EXPORT SYSTEM (Real-time MediaRecorder with Dual-Buffer) ---
 document.getElementById('btn-export').addEventListener('click', async () => {
   if (state.segments.video.length === 0 && state.segments.audio.length === 0) {
     alert('No media to export.');
@@ -1647,19 +1793,24 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   canvas.width = 1280;
   canvas.height = 720;
 
-  // Ensure both media elements are unmuted so their audio is captured by the AudioContext
   els.video.muted = false;
   els.video.volume = 1.0;
+  els.video2.muted = false;
+  els.video2.volume = 1.0;
   els.audio.muted = false;
   els.audio.volume = 1.0;
+  els.audio2.muted = false;
+  els.audio2.volume = 1.0;
   
   els.video.playbackRate = 1;
+  els.video2.playbackRate = 1;
   els.audio.playbackRate = 1;
+  els.audio2.playbackRate = 1;
 
   const canvasStream = canvas.captureStream(30);
   const combinedStream = new MediaStream([
     ...canvasStream.getVideoTracks(),
-    ...dest.stream.getAudioTracks() // This now contains the mixed audio of both video and added audio
+    ...dest.stream.getAudioTracks()
   ]);
 
   let mimeType = '';
@@ -1712,9 +1863,13 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     state.playhead = 0;
     renderPlayhead();
     els.audio.pause();
+    els.audio2.pause();
     els.audio.currentTime = 0;
+    els.audio2.currentTime = 0;
     els.video.pause();
+    els.video2.pause();
     els.video.currentTime = 0;
+    els.video2.currentTime = 0;
   };
 
   state.playhead = 0;
@@ -1723,11 +1878,31 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   const firstVidSeg = state.segments.video.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
   const firstAudSeg = state.segments.audio.find(s => 0 >= s.timelineStart && 0 < s.timelineStart + (s.sourceEnd - s.sourceStart));
 
+  // Initialize active elements
+  activeVideoElement = 'video';
+  activeAudioElement = 'audio';
+  els.video.style.opacity = '1';
+  els.video2.style.opacity = '0';
+
   if (firstVidSeg) {
     const media = state.mediaFiles.video.find(m => m.id === firstVidSeg.mediaId);
     if (media) {
       els.video.src = media.url;
       els.video.currentTime = firstVidSeg.sourceStart;
+      
+      // Preload next segment
+      const nextVidSeg = state.segments.video.find(s => 
+        s.timelineStart >= firstVidSeg.timelineStart + (firstVidSeg.sourceEnd - firstVidSeg.sourceStart) &&
+        s.timelineStart < firstVidSeg.timelineStart + (firstVidSeg.sourceEnd - firstVidSeg.sourceStart) + 2
+      );
+      if (nextVidSeg) {
+        const nextMedia = state.mediaFiles.video.find(m => m.id === nextVidSeg.mediaId);
+        if (nextMedia) {
+          els.video2.src = nextMedia.url;
+          els.video2.currentTime = nextVidSeg.sourceStart;
+          preloadedVideoSegId = nextVidSeg.id;
+        }
+      }
     }
   }
   
@@ -1736,6 +1911,20 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     if (media) {
       els.audio.src = media.url;
       els.audio.currentTime = firstAudSeg.sourceStart;
+      
+      // Preload next segment
+      const nextAudSeg = state.segments.audio.find(s => 
+        s.timelineStart >= firstAudSeg.timelineStart + (firstAudSeg.sourceEnd - firstAudSeg.sourceStart) &&
+        s.timelineStart < firstAudSeg.timelineStart + (firstAudSeg.sourceEnd - firstAudSeg.sourceStart) + 2
+      );
+      if (nextAudSeg) {
+        const nextMedia = state.mediaFiles.audio.find(m => m.id === nextAudSeg.mediaId);
+        if (nextMedia) {
+          els.audio2.src = nextMedia.url;
+          els.audio2.currentTime = nextAudSeg.sourceStart;
+          preloadedAudioSegId = nextAudSeg.id;
+        }
+      }
     }
   }
   
@@ -1810,71 +1999,111 @@ document.getElementById('btn-export').addEventListener('click', async () => {
       );
       
       if (vidSeg) {
-        const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
-        if (media) {
-          // Avoid unnecessary src reassignment for contiguous segments
-          const isSameFile = currentVidSegId && 
-            state.segments.video.some(s => s.id === currentVidSegId && s.mediaId === vidSeg.mediaId);
-          
-          const lastSeg = currentVidSegId ? 
-            state.segments.video.find(s => s.id === currentVidSegId) : null;
-          
-          const isContiguous = lastSeg && 
-            (lastSeg.timelineStart + (lastSeg.sourceEnd - lastSeg.sourceStart) === vidSeg.timelineStart) &&
-            (lastSeg.sourceEnd === vidSeg.sourceStart);
-
-          if (vidSeg.id !== currentVidSegId) {
-            if (!isContiguous || !isSameFile) {
-              els.video.src = media.url;
+        if (vidSeg.id !== currentVidSegId) {
+          if (preloadedVideoSegId === vidSeg.id) {
+            // Switch to preloaded
+            const activeVideo = getActiveVideo();
+            const inactiveVideo = getInactiveVideo();
+            activeVideo.pause();
+            activeVideoElement = activeVideoElement === 'video' ? 'video2' : 'video';
+            inactiveVideo.play().catch(()=>{});
+          } else {
+            // Fallback
+            const media = state.mediaFiles.video.find(m => m.id === vidSeg.mediaId);
+            if (media) {
+              const inactiveVideo = getInactiveVideo();
+              inactiveVideo.src = media.url;
               const sourceTime = vidSeg.sourceStart + (currentTime - vidSeg.timelineStart);
-              els.video.currentTime = sourceTime;
+              inactiveVideo.currentTime = sourceTime;
+              const activeVideo = getActiveVideo();
+              activeVideo.pause();
+              activeVideoElement = activeVideoElement === 'video' ? 'video2' : 'video';
+              inactiveVideo.play().catch(()=>{});
             }
-            currentVidSegId = vidSeg.id;
           }
-          if (els.video.paused) {
-            els.video.play().catch(()=>{});
+          currentVidSegId = vidSeg.id;
+          
+          // Preload next
+          const nextVidSeg = state.segments.video.find(s => 
+            s.timelineStart >= vidSeg.timelineStart + (vidSeg.sourceEnd - vidSeg.sourceStart) &&
+            s.timelineStart < vidSeg.timelineStart + (vidSeg.sourceEnd - vidSeg.sourceStart) + 2
+          );
+          if (nextVidSeg) {
+            const nextMedia = state.mediaFiles.video.find(m => m.id === nextVidSeg.mediaId);
+            if (nextMedia) {
+              const inactiveVideo = getInactiveVideo();
+              inactiveVideo.src = nextMedia.url;
+              inactiveVideo.currentTime = nextVidSeg.sourceStart;
+              preloadedVideoSegId = nextVidSeg.id;
+            }
           }
         }
+        
+        const currentActiveVideo = getActiveVideo();
+        if (currentActiveVideo.paused) {
+          currentActiveVideo.play().catch(()=>{});
+        }
       } else {
-        if (!els.video.paused) els.video.pause();
+        const currentActiveVideo = getActiveVideo();
+        if (!currentActiveVideo.paused) currentActiveVideo.pause();
         currentVidSegId = null;
       }
       
       if (audSeg) {
-        const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
-        if (media) {
-          const isSameFile = currentAudSegId && 
-            state.segments.audio.some(s => s.id === currentAudSegId && s.mediaId === audSeg.mediaId);
-          
-          const lastSeg = currentAudSegId ? 
-            state.segments.audio.find(s => s.id === currentAudSegId) : null;
-          
-          const isContiguous = lastSeg && 
-            (lastSeg.timelineStart + (lastSeg.sourceEnd - lastSeg.sourceStart) === audSeg.timelineStart) &&
-            (lastSeg.sourceEnd === audSeg.sourceStart);
-
-          if (audSeg.id !== currentAudSegId) {
-            if (!isContiguous || !isSameFile) {
-              els.audio.src = media.url;
+        if (audSeg.id !== currentAudSegId) {
+          if (preloadedAudioSegId === audSeg.id) {
+            const activeAudio = getActiveAudio();
+            const inactiveAudio = getInactiveAudio();
+            activeAudio.pause();
+            activeAudioElement = activeAudioElement === 'audio' ? 'audio2' : 'audio';
+            inactiveAudio.play().catch(()=>{});
+          } else {
+            const media = state.mediaFiles.audio.find(m => m.id === audSeg.mediaId);
+            if (media) {
+              const inactiveAudio = getInactiveAudio();
+              inactiveAudio.src = media.url;
               const sourceTime = audSeg.sourceStart + (currentTime - audSeg.timelineStart);
-              els.audio.currentTime = sourceTime;
+              inactiveAudio.currentTime = sourceTime;
+              const activeAudio = getActiveAudio();
+              activeAudio.pause();
+              activeAudioElement = activeAudioElement === 'audio' ? 'audio2' : 'audio';
+              inactiveAudio.play().catch(()=>{});
             }
-            currentAudSegId = audSeg.id;
           }
-          if (els.audio.paused) {
-            els.audio.play().catch(()=>{});
+          currentAudSegId = audSeg.id;
+          
+          // Preload next
+          const nextAudSeg = state.segments.audio.find(s => 
+            s.timelineStart >= audSeg.timelineStart + (audSeg.sourceEnd - audSeg.sourceStart) &&
+            s.timelineStart < audSeg.timelineStart + (audSeg.sourceEnd - audSeg.sourceStart) + 2
+          );
+          if (nextAudSeg) {
+            const nextMedia = state.mediaFiles.audio.find(m => m.id === nextAudSeg.mediaId);
+            if (nextMedia) {
+              const inactiveAudio = getInactiveAudio();
+              inactiveAudio.src = nextMedia.url;
+              inactiveAudio.currentTime = nextAudSeg.sourceStart;
+              preloadedAudioSegId = nextAudSeg.id;
+            }
           }
         }
+        
+        const currentActiveAudio = getActiveAudio();
+        if (currentActiveAudio.paused) {
+          currentActiveAudio.play().catch(()=>{});
+        }
       } else {
-        if (!els.audio.paused) els.audio.pause();
+        const currentActiveAudio = getActiveAudio();
+        if (!currentActiveAudio.paused) currentActiveAudio.pause();
         currentAudSegId = null;
       }
       
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       
-      if (vidSeg) {
-        ctx.drawImage(els.video, 0, 0, canvas.width, canvas.height);
+      const currentActiveVideo = getActiveVideo();
+      if (vidSeg && currentActiveVideo.readyState >= 2) {
+        ctx.drawImage(currentActiveVideo, 0, 0, canvas.width, canvas.height);
       }
     }
     
